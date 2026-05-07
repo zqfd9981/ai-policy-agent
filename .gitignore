@@ -1,0 +1,19 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.env
+.idea/
+.vscode/
+*.egg-info/
+dist/
+build/
+
+# 系统文件
+.DS_Store
+Thumbs.db
