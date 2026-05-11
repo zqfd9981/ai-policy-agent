@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Callable
 
 # 兼容直接运行 `python app\ingest\loader_factory.py` 的场景。
 if __package__ in (None, ""):
@@ -10,6 +11,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.ingest.metadata_loader import load_metadata, load_metadata_map
+from app.models.document import Document
 from app.models.metadata import PolicyMetadata
 
 
@@ -22,6 +24,10 @@ ALLOWED_RAW_SUFFIXES = {".pdf", ".txt"}
 
 class SourceFileLookupError(FileNotFoundError):
     """根据 metadata 查找 raw 文件失败时抛出的异常。"""
+
+
+class DocumentLoaderDispatchError(ValueError):
+    """根据文件格式分发具体 loader 失败时抛出的异常。"""
 
 
 def find_source_file(doc_id: str, raw_root: str | Path = DEFAULT_RAW_ROOT) -> Path:
@@ -86,6 +92,72 @@ def build_source_file_map(
     }
 
 
+def detect_source_format(source_path: str | Path) -> str:
+    """
+    根据真实文件路径识别原始文件格式。
+
+    这里优先信任磁盘上的真实扩展名，而不是外部传入的字符串。
+    """
+
+    path = Path(source_path)
+    source_format = path.suffix.lstrip(".").lower()
+
+    if not source_format:
+        raise DocumentLoaderDispatchError(f"无法从路径识别文件格式: {path}")
+
+    if f".{source_format}" not in ALLOWED_RAW_SUFFIXES:
+        allowed_formats = ", ".join(sorted(ext.lstrip(".") for ext in ALLOWED_RAW_SUFFIXES))
+        raise DocumentLoaderDispatchError(
+            f"暂不支持的原始文件格式: {source_format}，允许值为: {allowed_formats}"
+        )
+
+    return source_format
+
+
+def get_document_loader(source_format: str) -> Callable[[PolicyMetadata, str | Path | None], Document]:
+    """
+    根据 source_format 返回对应的文档读取函数。
+
+    这里使用函数内导入，是为了避免和 txt/pdf loader 之间产生循环导入。
+    """
+
+    normalized_format = source_format.strip().lower()
+
+    if normalized_format == "txt":
+        from app.ingest.txt_loader import load_txt_document
+
+        return load_txt_document
+
+    if normalized_format == "pdf":
+        from app.ingest.pdf_loader import load_pdf_document
+
+        return load_pdf_document
+
+    raise DocumentLoaderDispatchError(f"没有为 source_format={normalized_format} 配置 loader。")
+
+
+def load_document(
+    metadata: PolicyMetadata,
+    source_path: str | Path | None = None,
+    raw_root: str | Path = DEFAULT_RAW_ROOT,
+) -> Document:
+    """
+    统一读取入口：给定一条 metadata，自动分发到 txt 或 pdf loader。
+
+    调用方不需要再自己判断文件格式，只需要拿到最终的 Document。
+    """
+
+    resolved_source_path = (
+        Path(source_path)
+        if source_path is not None
+        else find_source_file_for_metadata(metadata, raw_root=raw_root)
+    )
+
+    source_format = detect_source_format(resolved_source_path)
+    loader = get_document_loader(source_format)
+    return loader(metadata, resolved_source_path)
+
+
 def _validate_raw_root(raw_root: Path) -> None:
     """确保 raw 根目录存在。"""
 
@@ -122,10 +194,10 @@ def _find_candidates(doc_id: str, raw_root: Path) -> list[Path]:
 
 
 def main() -> None:
-    """对“根据 metadata 查找 raw 文件”做一个简单联调测试。"""
+    """对“查找 raw 文件 + 自动读取 Document”做一个简单联调测试。"""
 
     print("=" * 60)
-    print("开始测试 raw 文件查找...")
+    print("开始测试 loader_factory...")
     print("=" * 60)
 
     metadata_list = load_metadata()
@@ -146,7 +218,18 @@ def main() -> None:
     sh003_path = find_source_file_for_metadata(sh003)
     print(f"SH003 -> {sh003_path}")
 
-    print("\n[OK] raw 文件查找测试通过！")
+    # 继续测试统一读取入口，确认它能自动分发到 txt / pdf loader。
+    print("\n统一读取入口测试：")
+    for doc_id in ("JS002", "SH001"):
+        metadata = metadata_map[doc_id]
+        document = load_document(metadata)
+        print(
+            f"{doc_id} -> format={document.source_format}, "
+            f"text_length={document.text_length}, "
+            f"path={document.source_path.name}"
+        )
+
+    print("\n[OK] loader_factory 测试通过！")
 
 
 if __name__ == "__main__":
