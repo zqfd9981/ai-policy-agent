@@ -1,4 +1,4 @@
-from app.models.document import Document
+from app.models.document import CleanDocument, Document
 from app.models.metadata import PolicyMetadata
 
-__all__ = ["Document", "PolicyMetadata"]
+__all__ = ["CleanDocument", "Document", "PolicyMetadata"]

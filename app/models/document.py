@@ -68,3 +68,65 @@ class Document:
         """返回原始正文长度，方便做调试和质量检查。"""
 
         return len(self.raw_text)
+
+
+@dataclass(frozen=True, slots=True)
+class CleanDocument:
+    """表示一篇已经完成基础清洗、适合后续切片的政策文档。"""
+
+    # 原始 Document，保留从 clean 结果回溯到源文档的能力。
+    document: Document
+    # 清洗后的正文文本。
+    # 这一版先聚焦基础标准化和轻量去噪，不做过度改写。
+    clean_text: str
+
+    def __post_init__(self) -> None:
+        """确保清洗结果至少是非空文本。"""
+
+        normalized_text = self.clean_text.strip()
+        object.__setattr__(self, "clean_text", normalized_text)
+
+        if not normalized_text:
+            raise ValueError(f"CleanDocument.clean_text 不能为空: {self.document.source_path}")
+
+    @property
+    def metadata(self) -> PolicyMetadata:
+        """直接暴露 metadata，方便后续 chunk / retrieval 复用。"""
+
+        return self.document.metadata
+
+    @property
+    def doc_id(self) -> str:
+        """直接暴露 doc_id。"""
+
+        return self.document.doc_id
+
+    @property
+    def title(self) -> str:
+        """直接暴露标题。"""
+
+        return self.document.title
+
+    @property
+    def region(self) -> str:
+        """直接暴露地区。"""
+
+        return self.document.region
+
+    @property
+    def source_path(self) -> Path:
+        """直接暴露原始文件路径。"""
+
+        return self.document.source_path
+
+    @property
+    def source_format(self) -> str:
+        """直接暴露原始文件格式。"""
+
+        return self.document.source_format
+
+    @property
+    def text_length(self) -> int:
+        """返回清洗后正文长度。"""
+
+        return len(self.clean_text)
