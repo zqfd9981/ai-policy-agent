@@ -27,6 +27,7 @@ def clean_document(document: Document) -> CleanDocument:
     - 不做激进的内容改写
     - 只做基础标准化
     - 对 PDF 额外去掉明显页码
+    - 对行内小标题做拆行，给后续标题识别和切片做准备
     """
 
     clean_text = clean_text_content(document.raw_text, source_format=document.source_format)
