@@ -159,13 +159,3 @@ class RetrievePolicyTool:
         """允许把工具对象直接当作可调用对象使用。"""
 
         return self.run(query, top_k=top_k)
-
-
-__all__ = [
-    "DEFAULT_RETRIEVE_TOP_K",
-    "RetrievePolicyOutput",
-    "RetrievePolicyTool",
-    "RetrievedPolicyChunk",
-    "get_default_retriever",
-    "retrieve_policy",
-]
