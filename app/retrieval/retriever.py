@@ -14,8 +14,23 @@ if __package__ in (None, ""):
 
 from app.chunk.chunk_builder import DEFAULT_CHUNK_OUTPUT_PATH, build_and_export_chunks
 from app.models.chunk import Chunk
-from app.retrieval.embedder import SimpleTfidfEmbedder
-from app.retrieval.vector_store import InMemoryVectorStore, VectorSearchResult
+from app.retrieval.embedder import (
+    DEFAULT_EMBEDDING_MODEL_NAME,
+    SentenceTransformerEmbedder,
+)
+from app.retrieval.vector_store import (
+    FaissVectorStore,
+    VectorSearchResult,
+)
+
+
+# 默认把正式版检索索引放在 outputs/retrieval 目录下。
+DEFAULT_RETRIEVAL_OUTPUT_DIR = (
+    Path(__file__).resolve().parents[2] / "outputs" / "retrieval"
+)
+DEFAULT_FAISS_INDEX_PATH = DEFAULT_RETRIEVAL_OUTPUT_DIR / "policy_chunks.faiss"
+DEFAULT_RETRIEVAL_PAYLOAD_PATH = DEFAULT_RETRIEVAL_OUTPUT_DIR / "policy_payloads.jsonl"
+DEFAULT_RETRIEVAL_MANIFEST_PATH = DEFAULT_RETRIEVAL_OUTPUT_DIR / "policy_retriever_manifest.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +66,47 @@ def load_chunk_payloads_from_jsonl(chunk_jsonl_path: Path | str) -> list[dict[st
     return payloads
 
 
+def export_payloads_to_jsonl(
+    payloads: list[dict[str, Any]],
+    output_path: Path | str = DEFAULT_RETRIEVAL_PAYLOAD_PATH,
+) -> Path:
+    """把检索 payload 列表导出到 jsonl。"""
+
+    normalized_output_path = Path(output_path)
+    normalized_output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with normalized_output_path.open("w", encoding="utf-8") as file:
+        for payload in payloads:
+            file.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+    return normalized_output_path
+
+
+def save_retriever_manifest(
+    manifest: dict[str, Any],
+    output_path: Path | str = DEFAULT_RETRIEVAL_MANIFEST_PATH,
+) -> Path:
+    """保存检索器构建信息，便于后续直接恢复。"""
+
+    normalized_output_path = Path(output_path)
+    normalized_output_path.parent.mkdir(parents=True, exist_ok=True)
+    normalized_output_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return normalized_output_path
+
+
+def load_retriever_manifest(manifest_path: Path | str) -> dict[str, Any]:
+    """读取已保存的检索器 manifest。"""
+
+    normalized_manifest_path = Path(manifest_path)
+    if not normalized_manifest_path.exists():
+        raise FileNotFoundError(f"retriever manifest 不存在: {normalized_manifest_path}")
+
+    return json.loads(normalized_manifest_path.read_text(encoding="utf-8"))
+
+
 def serialize_chunks(chunks: list[Chunk]) -> list[dict[str, Any]]:
     """把 Chunk 对象列表转成可检索的字典载荷。"""
 
@@ -74,13 +130,13 @@ def build_retrieval_text(payload: dict[str, Any]) -> str:
 
 
 class PolicyRetriever:
-    """第一版政策检索器。"""
+    """政策检索器。"""
 
     def __init__(
         self,
         *,
-        embedder: SimpleTfidfEmbedder,
-        vector_store: InMemoryVectorStore,
+        embedder: SentenceTransformerEmbedder,
+        vector_store: FaissVectorStore,
         payloads: list[dict[str, Any]],
     ) -> None:
         self.embedder = embedder
@@ -92,16 +148,21 @@ class PolicyRetriever:
         cls,
         payloads: list[dict[str, Any]],
         *,
-        max_features: int = 8000,
-        min_df: int = 1,
+        embedding_model_name: str = DEFAULT_EMBEDDING_MODEL_NAME,
+        device: str | None = None,
+        batch_size: int = 16,
     ) -> "PolicyRetriever":
-        """基于 chunk 载荷列表构建检索器。"""
+        """基于 chunk 载荷列表构建正式版检索器。"""
 
         retrieval_texts = [build_retrieval_text(payload) for payload in payloads]
-        embedder = SimpleTfidfEmbedder(max_features=max_features, min_df=min_df)
-        embeddings = embedder.fit_transform(retrieval_texts)
+        embedder = SentenceTransformerEmbedder(
+            model_name=embedding_model_name,
+            device=device,
+            batch_size=batch_size,
+        )
+        embeddings = embedder.encode_texts(retrieval_texts)
 
-        vector_store = InMemoryVectorStore()
+        vector_store = FaissVectorStore()
         vector_store.add(payloads, embeddings)
         return cls(embedder=embedder, vector_store=vector_store, payloads=payloads)
 
@@ -110,15 +171,17 @@ class PolicyRetriever:
         cls,
         chunks: list[Chunk],
         *,
-        max_features: int = 8000,
-        min_df: int = 1,
+        embedding_model_name: str = DEFAULT_EMBEDDING_MODEL_NAME,
+        device: str | None = None,
+        batch_size: int = 16,
     ) -> "PolicyRetriever":
         """直接基于 Chunk 对象列表构建检索器。"""
 
         return cls.from_chunk_payloads(
             serialize_chunks(chunks),
-            max_features=max_features,
-            min_df=min_df,
+            embedding_model_name=embedding_model_name,
+            device=device,
+            batch_size=batch_size,
         )
 
     @classmethod
@@ -126,16 +189,65 @@ class PolicyRetriever:
         cls,
         chunk_jsonl_path: Path | str = DEFAULT_CHUNK_OUTPUT_PATH,
         *,
-        max_features: int = 8000,
-        min_df: int = 1,
+        embedding_model_name: str = DEFAULT_EMBEDDING_MODEL_NAME,
+        device: str | None = None,
+        batch_size: int = 16,
     ) -> "PolicyRetriever":
         """从 chunk jsonl 文件构建检索器。"""
 
         payloads = load_chunk_payloads_from_jsonl(chunk_jsonl_path)
         return cls.from_chunk_payloads(
             payloads,
-            max_features=max_features,
-            min_df=min_df,
+            embedding_model_name=embedding_model_name,
+            device=device,
+            batch_size=batch_size,
+        )
+
+    @classmethod
+    def from_saved_artifacts(
+        cls,
+        *,
+        index_path: Path | str = DEFAULT_FAISS_INDEX_PATH,
+        payload_path: Path | str = DEFAULT_RETRIEVAL_PAYLOAD_PATH,
+        embedding_model_name: str = DEFAULT_EMBEDDING_MODEL_NAME,
+        device: str | None = None,
+        batch_size: int = 16,
+    ) -> "PolicyRetriever":
+        """
+        从已保存的 payload + FAISS 索引直接恢复检索器。
+
+        这条路径不会重新编码全部 chunk，因此启动更快。
+        """
+
+        payloads = load_chunk_payloads_from_jsonl(payload_path)
+        vector_store = FaissVectorStore.from_index_file(index_path, items=payloads)
+        embedder = SentenceTransformerEmbedder(
+            model_name=embedding_model_name,
+            device=device,
+            batch_size=batch_size,
+        )
+        return cls(embedder=embedder, vector_store=vector_store, payloads=payloads)
+
+    @classmethod
+    def from_manifest(
+        cls,
+        manifest_path: Path | str = DEFAULT_RETRIEVAL_MANIFEST_PATH,
+        *,
+        device: str | None = None,
+        batch_size: int = 16,
+    ) -> "PolicyRetriever":
+        """根据 manifest 恢复检索器。"""
+
+        manifest = load_retriever_manifest(manifest_path)
+        return cls.from_saved_artifacts(
+            index_path=manifest["index_path"],
+            payload_path=manifest["payload_path"],
+            embedding_model_name=manifest.get(
+                "embedding_model_name",
+                DEFAULT_EMBEDDING_MODEL_NAME,
+            ),
+            device=device,
+            batch_size=batch_size,
         )
 
     def search(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
@@ -165,13 +277,80 @@ class PolicyRetriever:
             metadata=dict(item.get("metadata", {})),
         )
 
+    def save_artifacts(
+        self,
+        *,
+        index_path: Path | str = DEFAULT_FAISS_INDEX_PATH,
+        payload_path: Path | str = DEFAULT_RETRIEVAL_PAYLOAD_PATH,
+        manifest_path: Path | str = DEFAULT_RETRIEVAL_MANIFEST_PATH,
+        source_chunk_path: Path | str = DEFAULT_CHUNK_OUTPUT_PATH,
+    ) -> dict[str, Path]:
+        """
+        保存当前检索器的持久化产物。
+
+        当前只支持保存正式版 FAISS 检索器；
+        baseline 版没有必要额外持久化。
+        """
+
+        if not isinstance(self.vector_store, FaissVectorStore):
+            raise TypeError("只有正式版 FAISS 检索器支持 save_artifacts。")
+
+        saved_index_path = self.vector_store.save_index(index_path)
+        saved_payload_path = export_payloads_to_jsonl(self.payloads, payload_path)
+
+        manifest = {
+            "embedding_model_name": self.embedder.model_name,
+            "index_path": str(saved_index_path),
+            "payload_path": str(saved_payload_path),
+            "source_chunk_path": str(source_chunk_path),
+            "payload_count": len(self.payloads),
+            "vector_dimension": self.vector_store.dimension,
+        }
+        saved_manifest_path = save_retriever_manifest(manifest, manifest_path)
+
+        return {
+            "index_path": saved_index_path,
+            "payload_path": saved_payload_path,
+            "manifest_path": saved_manifest_path,
+        }
+
+
+def build_and_save_default_retriever(
+    *,
+    chunk_jsonl_path: Path | str = DEFAULT_CHUNK_OUTPUT_PATH,
+    ensure_chunk_file: bool = True,
+    embedding_model_name: str = DEFAULT_EMBEDDING_MODEL_NAME,
+    device: str | None = None,
+    batch_size: int = 16,
+    index_path: Path | str = DEFAULT_FAISS_INDEX_PATH,
+    payload_path: Path | str = DEFAULT_RETRIEVAL_PAYLOAD_PATH,
+    manifest_path: Path | str = DEFAULT_RETRIEVAL_MANIFEST_PATH,
+) -> tuple[PolicyRetriever, dict[str, Path]]:
+    """构建正式版检索器并把索引相关产物一起保存。"""
+
+    retriever = build_default_retriever(
+        chunk_jsonl_path=chunk_jsonl_path,
+        ensure_chunk_file=ensure_chunk_file,
+        embedding_model_name=embedding_model_name,
+        device=device,
+        batch_size=batch_size,
+    )
+    saved_paths = retriever.save_artifacts(
+        index_path=index_path,
+        payload_path=payload_path,
+        manifest_path=manifest_path,
+        source_chunk_path=chunk_jsonl_path,
+    )
+    return retriever, saved_paths
+
 
 def build_default_retriever(
     *,
     chunk_jsonl_path: Path | str = DEFAULT_CHUNK_OUTPUT_PATH,
     ensure_chunk_file: bool = True,
-    max_features: int = 8000,
-    min_df: int = 1,
+    embedding_model_name: str = DEFAULT_EMBEDDING_MODEL_NAME,
+    device: str | None = None,
+    batch_size: int = 16,
 ) -> PolicyRetriever:
     """
     构建默认检索器。
@@ -185,9 +364,44 @@ def build_default_retriever(
 
     return PolicyRetriever.from_jsonl(
         normalized_path,
-        max_features=max_features,
-        min_df=min_df,
+        embedding_model_name=embedding_model_name,
+        device=device,
+        batch_size=batch_size,
     )
+
+
+def load_or_build_default_retriever(
+    *,
+    chunk_jsonl_path: Path | str = DEFAULT_CHUNK_OUTPUT_PATH,
+    ensure_chunk_file: bool = True,
+    embedding_model_name: str = DEFAULT_EMBEDDING_MODEL_NAME,
+    device: str | None = None,
+    batch_size: int = 16,
+    manifest_path: Path | str = DEFAULT_RETRIEVAL_MANIFEST_PATH,
+) -> PolicyRetriever:
+    """
+    优先从已保存产物恢复检索器；不存在时再重新构建。
+
+    这是后面 tools / agent 最适合直接调用的入口。
+    """
+
+    normalized_manifest_path = Path(manifest_path)
+    if normalized_manifest_path.exists():
+        return PolicyRetriever.from_manifest(
+            normalized_manifest_path,
+            device=device,
+            batch_size=batch_size,
+        )
+
+    retriever, _ = build_and_save_default_retriever(
+        chunk_jsonl_path=chunk_jsonl_path,
+        ensure_chunk_file=ensure_chunk_file,
+        embedding_model_name=embedding_model_name,
+        device=device,
+        batch_size=batch_size,
+        manifest_path=normalized_manifest_path,
+    )
+    return retriever
 
 
 def main() -> None:
@@ -197,7 +411,10 @@ def main() -> None:
     print("开始测试 retrieval 第一版...")
     print("=" * 60)
 
-    retriever = build_default_retriever()
+    retriever, saved_paths = build_and_save_default_retriever()
+    print(f"[OK] 已保存 FAISS 索引: {saved_paths['index_path']}")
+    print(f"[OK] 已保存 payload 文件: {saved_paths['payload_path']}")
+    print(f"[OK] 已保存 manifest: {saved_paths['manifest_path']}")
     sample_queries = [
         "医疗服务 人工智能 大模型",
         "高质量数据集 数据要素",
@@ -215,6 +432,11 @@ def main() -> None:
             )
             print(result.text[:100])
             print("-" * 40)
+
+    restored_retriever = PolicyRetriever.from_manifest()
+    restored_results = restored_retriever.search("医疗服务 人工智能 大模型", top_k=1)
+    if restored_results:
+        print(f"\n[OK] 恢复索引测试通过: {restored_results[0].chunk_id}")
 
     print("[OK] retrieval 第一版测试通过")
 

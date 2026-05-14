@@ -1,167 +1,99 @@
 from __future__ import annotations
 
-import math
-import re
-from collections import Counter
-
 import numpy as np
+from sentence_transformers import SentenceTransformer
 
 
-# 抽取英文单词、数字词和常见技术符号组合，例如 AI、AIGC、GPT-4、RAG。
-ALNUM_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_+\-./]*")
-# 抽取中文字符，用于后续构造中文双字切分。
-CHINESE_CHAR_PATTERN = re.compile(r"[\u4e00-\u9fff]")
+# 正式版默认采用中文检索效果更稳的 BGE v1.5 模型。
+DEFAULT_EMBEDDING_MODEL_NAME = "BAAI/bge-base-zh-v1.5"
+# BGE 系列做中文检索时，通常会给 query 加一条检索任务提示词。
+BGE_ZH_QUERY_INSTRUCTION = "为这个句子生成表示以用于检索相关文章："
 
 
-def tokenize_text(text: str) -> list[str]:
+class SentenceTransformerEmbedder:
     """
-    把文本切成轻量 token 列表。
+    基于 sentence-transformers 的正式版向量器。
 
-    这版不依赖第三方中文分词库，而是采用一个更稳的折中方案：
-    1. 英文、数字、技术缩写按词提取
-    2. 中文连续字符转成双字切分
-
-    这样虽然不如专业分词细，但足够支撑第一版检索底座。
-    """
-
-    normalized_text = text.strip().lower()
-    if not normalized_text:
-        return []
-
-    tokens: list[str] = []
-
-    # 先保留英文词、缩写和数字类 token。
-    tokens.extend(ALNUM_TOKEN_PATTERN.findall(normalized_text))
-
-    # 对中文采用双字切分，兼顾简单性和一定的语义稳定性。
-    chinese_chars = CHINESE_CHAR_PATTERN.findall(normalized_text)
-    if len(chinese_chars) == 1:
-        tokens.append(chinese_chars[0])
-    elif len(chinese_chars) >= 2:
-        tokens.extend(
-            chinese_chars[index] + chinese_chars[index + 1]
-            for index in range(len(chinese_chars) - 1)
-        )
-
-    return tokens
-
-
-class SimpleTfidfEmbedder:
-    """
-    一个纯本地、零额外依赖的轻量 TF-IDF 向量器。
-
-    设计目标不是追求最强效果，而是先把 retrieval 主链路跑通：
-    - 能 fit 语料
-    - 能把 chunk 转成向量
-    - 能把 query 转成同维度向量
-    - 后面如果想替换成真正 embedding 模型，只需要替换这一层
+    这一层只保留项目当前真正使用的正式方案：
+    - 加载预训练 embedding 模型
+    - 把 chunk / query 转成 dense vector
+    - 在查询时自动附加检索指令
     """
 
-    def __init__(self, *, max_features: int = 8000, min_df: int = 1) -> None:
-        self.max_features = max_features
-        self.min_df = min_df
-        self.vocabulary_: dict[str, int] = {}
-        self.idf_: np.ndarray | None = None
-        self.is_fitted = False
+    def __init__(
+        self,
+        *,
+        model_name: str = DEFAULT_EMBEDDING_MODEL_NAME,
+        query_instruction: str | None = BGE_ZH_QUERY_INSTRUCTION,
+        device: str | None = None,
+        batch_size: int = 16,
+        normalize_embeddings: bool = True,
+    ) -> None:
+        self.model_name = model_name
+        self.query_instruction = query_instruction
+        self.device = device
+        self.batch_size = batch_size
+        self.normalize_embeddings = normalize_embeddings
+        self._model: SentenceTransformer | None = None
+        self._dimension: int | None = None
 
     @property
     def dimension(self) -> int:
-        """返回当前向量维度。"""
+        """返回向量维度；如模型未加载则先自动加载。"""
 
-        return len(self.vocabulary_)
+        self._ensure_model_loaded()
+        if self._dimension is None:
+            raise RuntimeError("模型维度尚未初始化。")
+        return self._dimension
 
-    def fit(self, texts: list[str]) -> "SimpleTfidfEmbedder":
-        """基于一批文本建立词表并计算 IDF。"""
+    def encode_texts(self, texts: list[str]) -> np.ndarray:
+        """把一批文档文本编码成向量矩阵。"""
 
-        document_frequency: Counter[str] = Counter()
-
-        for text in texts:
-            unique_tokens = set(tokenize_text(text))
-            for token in unique_tokens:
-                document_frequency[token] += 1
-
-        filtered_tokens = [
-            token
-            for token, doc_freq in document_frequency.items()
-            if doc_freq >= self.min_df
-        ]
-
-        # 第一版优先保留更常见、覆盖面更广的 token，便于稳定检索。
-        filtered_tokens.sort(key=lambda token: (-document_frequency[token], token))
-
-        if self.max_features > 0:
-            filtered_tokens = filtered_tokens[: self.max_features]
-
-        self.vocabulary_ = {
-            token: index
-            for index, token in enumerate(filtered_tokens)
-        }
-
-        total_documents = max(len(texts), 1)
-        idf_values = np.ones(len(self.vocabulary_), dtype=np.float32)
-
-        for token, index in self.vocabulary_.items():
-            doc_freq = document_frequency[token]
-            idf_values[index] = math.log((1 + total_documents) / (1 + doc_freq)) + 1.0
-
-        self.idf_ = idf_values
-        self.is_fitted = True
-        return self
-
-    def transform(self, texts: list[str]) -> np.ndarray:
-        """把文本列表转成归一化后的 TF-IDF 向量矩阵。"""
-
-        self._ensure_fitted()
+        self._ensure_model_loaded()
         if not texts:
             return np.zeros((0, self.dimension), dtype=np.float32)
 
-        matrix = np.zeros((len(texts), self.dimension), dtype=np.float32)
-
-        for row_index, text in enumerate(texts):
-            token_counts = Counter(tokenize_text(text))
-            if not token_counts:
-                continue
-
-            total_tokens = sum(token_counts.values())
-            for token, count in token_counts.items():
-                token_index = self.vocabulary_.get(token)
-                if token_index is None:
-                    continue
-
-                # 采用最基础的词频归一化，保持实现简单透明。
-                term_frequency = count / total_tokens
-                matrix[row_index, token_index] = term_frequency
-
-        matrix *= self.idf_
-        return self._l2_normalize(matrix)
-
-    def fit_transform(self, texts: list[str]) -> np.ndarray:
-        """先 fit 再 transform。"""
-
-        self.fit(texts)
-        return self.transform(texts)
+        normalized_texts = [text.strip() for text in texts]
+        embeddings = self._model.encode(
+            normalized_texts,
+            batch_size=self.batch_size,
+            normalize_embeddings=self.normalize_embeddings,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )
+        return embeddings.astype(np.float32, copy=False)
 
     def encode_query(self, query: str) -> np.ndarray:
-        """把单条查询转成 1 维向量。"""
+        """把单条查询编码成向量。"""
 
-        transformed = self.transform([query])
-        if transformed.size == 0:
+        self._ensure_model_loaded()
+        normalized_query = query.strip()
+        if not normalized_query:
             return np.zeros(self.dimension, dtype=np.float32)
-        return transformed[0]
 
-    def _ensure_fitted(self) -> None:
-        """在 transform 前确认 embedder 已完成 fit。"""
+        if self.query_instruction:
+            normalized_query = f"{self.query_instruction}{normalized_query}"
 
-        if not self.is_fitted or self.idf_ is None:
-            raise RuntimeError("SimpleTfidfEmbedder 尚未 fit，不能直接 transform。")
+        embedding = self._model.encode(
+            normalized_query,
+            normalize_embeddings=self.normalize_embeddings,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )
+        return np.asarray(embedding, dtype=np.float32)
 
-    @staticmethod
-    def _l2_normalize(matrix: np.ndarray) -> np.ndarray:
-        """按行做 L2 归一化，便于后续直接用点积近似余弦相似度。"""
+    def _ensure_model_loaded(self) -> None:
+        """按需加载底层 SentenceTransformer 模型。"""
 
-        if matrix.size == 0:
-            return matrix
+        if self._model is not None:
+            return
 
-        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-        norms[norms == 0.0] = 1.0
-        return matrix / norms
+        self._model = SentenceTransformer(
+            self.model_name,
+            device=self.device,
+            trust_remote_code=False,
+        )
+        if hasattr(self._model, "get_embedding_dimension"):
+            self._dimension = int(self._model.get_embedding_dimension())
+        else:
+            self._dimension = int(self._model.get_sentence_embedding_dimension())
