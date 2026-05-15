@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from app.agent.router import ROUTE_RETRIEVE, ROUTE_UNSUPPORTED
+from app.agent.router import ROUTE_RETRIEVE, ROUTE_SUMMARIZE, ROUTE_UNSUPPORTED
 from app.agent.state import AgentState
 from app.models.response import AgentResponse
 from app.tools.retrieve_policy import RetrievePolicyOutput, RetrievePolicyTool
+from app.tools.summarize_policy import (
+    PolicySummaryOutput,
+    SummarizePolicyTool,
+    render_policy_summary,
+)
 
 
 AgentNode = Callable[[AgentState], AgentState]
@@ -54,6 +59,42 @@ def retrieve_node(
     return state.with_tool_output(tool_output).with_final_response(response)
 
 
+def summarize_node(
+    state: AgentState,
+    *,
+    tool: SummarizePolicyTool | None = None,
+) -> AgentState:
+    """执行摘要节点。"""
+
+    active_tool = tool or SummarizePolicyTool()
+    route = state.route or ROUTE_SUMMARIZE
+
+    try:
+        tool_output = active_tool.run(
+            state.query.user_query,
+            top_k=state.query.top_k,
+        )
+    except Exception as error:
+        error_message = f"执行摘要节点失败: {error}"
+        return state.with_error(error_message).with_final_response(
+            AgentResponse(
+                success=False,
+                route=route,
+                message="政策摘要执行失败。",
+                error_message=error_message,
+            )
+        )
+
+    citations = tuple(item.to_dict() for item in tool_output.all_citations)
+    response = AgentResponse(
+        success=True,
+        route=route,
+        message=render_policy_summary(tool_output),
+        citations=citations,
+    )
+    return state.with_tool_output(tool_output).with_final_response(response)
+
+
 def unsupported_node(state: AgentState) -> AgentState:
     """处理当前尚未实现的路由。"""
 
@@ -77,6 +118,8 @@ def select_node(route: str | None) -> AgentNode:
 
     if normalized_route == ROUTE_RETRIEVE:
         return retrieve_node
+    if normalized_route == ROUTE_SUMMARIZE:
+        return summarize_node
 
     return unsupported_node
 

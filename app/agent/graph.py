@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import cast
 
-from app.agent.nodes import retrieve_node, select_node
+from app.agent.nodes import retrieve_node, select_node, summarize_node
 from app.agent.router import DEFAULT_SUPPORTED_ROUTES, route_state
 from app.agent.state import AgentState
 from app.models.query import DEFAULT_QUERY_TOP_K, AgentQuery
 from app.models.response import AgentResponse
 from app.tools.retrieve_policy import RetrievePolicyTool
+from app.tools.summarize_policy import SummarizePolicyTool
 
 
 @dataclass(slots=True)
@@ -24,6 +25,7 @@ class PolicyAgentGraph:
     """
 
     retrieve_tool: RetrievePolicyTool | None = None
+    summarize_tool: SummarizePolicyTool | None = None
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES
 
     def run(
@@ -71,6 +73,11 @@ class PolicyAgentGraph:
                 state,
                 tool=self.retrieve_tool,
             )
+        if node is summarize_node:
+            return summarize_node(
+                state,
+                tool=self.summarize_tool,
+            )
 
         return node(state)
 
@@ -91,12 +98,14 @@ def run_agent_workflow(
     *,
     top_k: int = DEFAULT_QUERY_TOP_K,
     retrieve_tool: RetrievePolicyTool | None = None,
+    summarize_tool: SummarizePolicyTool | None = None,
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES,
 ) -> AgentState:
     """函数式入口：执行一次完整 Agent 工作流。"""
 
     graph = PolicyAgentGraph(
         retrieve_tool=retrieve_tool,
+        summarize_tool=summarize_tool,
         supported_routes=cast(frozenset[str], supported_routes),
     )
     return graph.run(query, top_k=top_k)
@@ -107,12 +116,14 @@ def run_agent_query(
     *,
     top_k: int = DEFAULT_QUERY_TOP_K,
     retrieve_tool: RetrievePolicyTool | None = None,
+    summarize_tool: SummarizePolicyTool | None = None,
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES,
 ) -> AgentResponse:
     """函数式入口：执行一次完整 Agent 工作流并返回最终响应。"""
 
     graph = PolicyAgentGraph(
         retrieve_tool=retrieve_tool,
+        summarize_tool=summarize_tool,
         supported_routes=cast(frozenset[str], supported_routes),
     )
     return graph.run_and_get_response(query, top_k=top_k)
