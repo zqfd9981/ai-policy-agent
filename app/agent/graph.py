@@ -11,6 +11,7 @@ from app.agent.repair import PolicyAgentRepairer
 from app.agent.rewrite import PolicyAgentRewriter
 from app.agent.nodes import (
     answer_node,
+    compare_node,
     judge_node,
     next_step_node,
     planner_node,
@@ -24,6 +25,7 @@ from app.agent.router import DEFAULT_SUPPORTED_ROUTES
 from app.agent.state import AgentState
 from app.models.query import DEFAULT_QUERY_TOP_K, AgentQuery
 from app.models.response import AgentResponse
+from app.tools.compare_policy import ComparePolicyTool
 from app.tools.retrieve_policy import RetrievePolicyTool
 from app.tools.summarize_policy import SummarizePolicyTool
 
@@ -50,6 +52,7 @@ class PolicyAgentGraph:
     next_step_planner: PolicyAgentNextStepPlanner | None = None
     retrieve_tool: RetrievePolicyTool | None = None
     summarize_tool: SummarizePolicyTool | None = None
+    compare_tool: ComparePolicyTool | None = None
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES
 
     def run(
@@ -139,6 +142,11 @@ class PolicyAgentGraph:
                 state,
                 tool=self.summarize_tool,
             )
+        if node is compare_node:
+            return compare_node(
+                state,
+                tool=self.compare_tool,
+            )
 
         return node(state)
 
@@ -189,6 +197,7 @@ def run_agent_workflow(
     next_step_planner: PolicyAgentNextStepPlanner | None = None,
     retrieve_tool: RetrievePolicyTool | None = None,
     summarize_tool: SummarizePolicyTool | None = None,
+    compare_tool: ComparePolicyTool | None = None,
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES,
 ) -> AgentState:
     """函数式入口：执行一次完整 Agent 工作流。"""
@@ -202,6 +211,7 @@ def run_agent_workflow(
         next_step_planner=next_step_planner,
         retrieve_tool=retrieve_tool,
         summarize_tool=summarize_tool,
+        compare_tool=compare_tool,
         supported_routes=cast(frozenset[str], supported_routes),
     )
     return graph.run(query, top_k=top_k, max_retries=max_retries)
@@ -220,6 +230,7 @@ def run_agent_query(
     next_step_planner: PolicyAgentNextStepPlanner | None = None,
     retrieve_tool: RetrievePolicyTool | None = None,
     summarize_tool: SummarizePolicyTool | None = None,
+    compare_tool: ComparePolicyTool | None = None,
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES,
 ) -> AgentResponse:
     """函数式入口：执行一次完整 Agent 工作流并返回最终响应。"""
@@ -233,6 +244,7 @@ def run_agent_query(
         next_step_planner=next_step_planner,
         retrieve_tool=retrieve_tool,
         summarize_tool=summarize_tool,
+        compare_tool=compare_tool,
         supported_routes=cast(frozenset[str], supported_routes),
     )
     return graph.run_and_get_response(query, top_k=top_k, max_retries=max_retries)

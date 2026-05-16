@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.llm.client import OpenAILLMClient
+from app.tools.compare_policy import PolicyCompareOutput, render_policy_comparison
 from app.tools.retrieve_policy import RetrievePolicyOutput
 from app.tools.summarize_policy import PolicySummaryOutput, render_policy_summary
 
@@ -124,6 +125,21 @@ def build_answer_context(
         ]
         return "\n".join(lines), citations
 
+    if isinstance(tool_output, PolicyCompareOutput):
+        citations = tuple(dict(item) for item in tool_output.all_citations)
+        lines = [
+            f"用户问题：{user_query}",
+            f"任务类型：{intent or 'compare'}",
+            "",
+            f"对比对象A：{tool_output.left_summary.title} ({tool_output.left_summary.doc_id})",
+            f"对比对象B：{tool_output.right_summary.title} ({tool_output.right_summary.doc_id})",
+            f"定位依据：{tool_output.selection_reason}",
+            "",
+            "结构化对比草稿：",
+            render_policy_comparison(tool_output),
+        ]
+        return "\n".join(lines), citations
+
     return f"用户问题：{user_query}\n任务类型：{intent or 'unknown'}", ()
 
 
@@ -158,6 +174,13 @@ def fallback_answer(
         return AnswerDraft(
             message=render_policy_summary(tool_output),
             citations=tuple(item.to_dict() for item in tool_output.all_citations),
+            source="rule",
+        )
+
+    if isinstance(tool_output, PolicyCompareOutput):
+        return AnswerDraft(
+            message=render_policy_comparison(tool_output),
+            citations=tuple(dict(item) for item in tool_output.all_citations),
             source="rule",
         )
 

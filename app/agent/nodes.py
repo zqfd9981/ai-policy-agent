@@ -16,6 +16,7 @@ from app.agent.router import ROUTE_COMPARE, ROUTE_RETRIEVE, ROUTE_SUMMARIZE, ROU
 from app.agent.router import detect_intent_route, route_state
 from app.agent.state import AgentState
 from app.models.response import AgentResponse
+from app.tools.compare_policy import ComparePolicyTool
 from app.tools.retrieve_policy import RetrievePolicyTool
 from app.tools.summarize_policy import (
     SummarizePolicyTool,
@@ -88,12 +89,14 @@ def fallback_planner_node(
     answer_style = "direct"
     if detected_intent == ROUTE_SUMMARIZE:
         answer_style = "structured"
+    if detected_intent == ROUTE_COMPARE:
+        answer_style = "comparative"
 
     return routed_state.with_planner_result(
         intent=detected_intent,
         route=routed_state.route or ROUTE_UNSUPPORTED,
         needs_rag=detected_intent != "chat",
-        needs_rewrite=detected_intent in {ROUTE_RETRIEVE, ROUTE_SUMMARIZE},
+        needs_rewrite=detected_intent in {ROUTE_RETRIEVE, ROUTE_SUMMARIZE, ROUTE_COMPARE},
         answer_style=answer_style,
         planner_reason="当前未启用 LLM planner，使用规则路由结果作为兜底规划。",
         planner_source="rule",
@@ -216,6 +219,43 @@ def summarize_node(
                 success=False,
                 route=route,
                 message="政策摘要执行失败。",
+                error_message=error_message,
+            )
+        )
+
+    return state.with_tool_output(tool_output)
+
+
+def compare_node(
+    state: AgentState,
+    *,
+    tool: ComparePolicyTool | None = None,
+) -> AgentState:
+    """
+    执行对比节点。
+
+    compare 的第一版刻意复用 summarize 的结构：
+    - 先锁定两篇政策
+    - 再对两篇政策分别做固定分区摘要
+    - 最后把同名分区并排组织成对比输出
+    """
+
+    active_tool = tool or ComparePolicyTool()
+    route = state.route or ROUTE_COMPARE
+
+    try:
+        query_for_compare = state.effective_query
+        tool_output = active_tool.run(
+            query_for_compare,
+            top_k=max(2, state.query.top_k),
+        )
+    except Exception as error:
+        error_message = f"执行对比节点失败: {error}"
+        return state.with_error(error_message).with_final_response(
+            AgentResponse(
+                success=False,
+                route=route,
+                message="政策对比执行失败。",
                 error_message=error_message,
             )
         )
@@ -464,5 +504,7 @@ def select_node(route: str | None) -> AgentNode:
         return retrieve_node
     if normalized_route == ROUTE_SUMMARIZE:
         return summarize_node
+    if normalized_route == ROUTE_COMPARE:
+        return compare_node
 
     return unsupported_node

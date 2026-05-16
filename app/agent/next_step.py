@@ -8,6 +8,7 @@ from app.agent.router import ROUTE_COMPARE, ROUTE_RETRIEVE, ROUTE_SUMMARIZE
 from app.agent.state import AgentState
 from app.llm.client import OpenAILLMClient
 from app.models.response import AgentResponse
+from app.tools.compare_policy import PolicyCompareOutput
 from app.tools.retrieve_policy import RetrievePolicyOutput
 from app.tools.summarize_policy import PolicySummaryOutput
 
@@ -128,6 +129,12 @@ def describe_next_step_evidence(state: AgentState) -> str:
             f"摘要证据数为 {tool_output.citation_count}。"
         )
 
+    if isinstance(tool_output, PolicyCompareOutput):
+        return (
+            f"compare: 当前正在对比 {tool_output.left_summary.doc_id} 与 "
+            f"{tool_output.right_summary.doc_id}，总引用数为 {tool_output.citation_count}。"
+        )
+
     return "unknown: 当前没有稳定的结构化证据。"
 
 
@@ -239,8 +246,8 @@ def build_summary_switch_query(state: AgentState) -> str:
 def should_suggest_compare(state: AgentState) -> bool:
     """判断当前状态是否更适合建议 compare。"""
 
-    if state.intent == ROUTE_COMPARE:
-        return True
+    if state.route == ROUTE_COMPARE:
+        return False
 
     if state.route != ROUTE_RETRIEVE:
         return False
@@ -277,6 +284,12 @@ def build_compare_followups(state: AgentState) -> tuple[str, ...]:
 
 def build_followup_questions(state: AgentState) -> tuple[str, ...]:
     """根据当前路由与结果形态，生成更具体的追问建议。"""
+
+    if state.route == ROUTE_COMPARE:
+        return (
+            "你可以直接指定两篇想比较的政策名称，我会继续做定向对比。",
+            "你也可以补充比较维度，例如支持重点、适用对象、申报条件或地区差异。",
+        )
 
     if state.route == ROUTE_SUMMARIZE:
         return (

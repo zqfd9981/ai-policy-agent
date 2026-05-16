@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.agent.answer import extract_readable_snippet
 from app.llm.client import OpenAILLMClient
 from app.models.response import AgentResponse
+from app.tools.compare_policy import PolicyCompareOutput
 from app.tools.retrieve_policy import RetrievePolicyOutput
 from app.tools.summarize_policy import PolicySummaryOutput
 
@@ -148,6 +149,13 @@ def describe_tool_output(tool_output: Any) -> str:
             f"共抽取 {tool_output.citation_count} 条摘要证据。"
         )
 
+    if isinstance(tool_output, PolicyCompareOutput):
+        return (
+            f"compare: 正在对比 {tool_output.left_summary.title} "
+            f"({tool_output.left_summary.doc_id}) 与 {tool_output.right_summary.title} "
+            f"({tool_output.right_summary.doc_id})，总引用数为 {tool_output.citation_count}。"
+        )
+
     return "unknown: 当前没有可识别的工具证据。"
 
 
@@ -172,6 +180,9 @@ def fallback_judge(
 
     if isinstance(tool_output, PolicySummaryOutput):
         return judge_summary_answer(tool_output, final_response)
+
+    if isinstance(tool_output, PolicyCompareOutput):
+        return judge_compare_answer(tool_output, final_response)
 
     grounded = final_response.citation_count > 0
     return JudgeDecision(
@@ -287,3 +298,34 @@ def summary_has_readable_support(tool_output: PolicySummaryOutput) -> bool:
         if extract_readable_snippet(item.text):
             return True
     return False
+
+
+def judge_compare_answer(
+    tool_output: PolicyCompareOutput,
+    final_response: AgentResponse,
+) -> JudgeDecision:
+    """规则评估 compare 分支回答质量。"""
+
+    has_citations = final_response.citation_count > 0
+    has_titles = (
+        tool_output.left_summary.title in final_response.message
+        and tool_output.right_summary.title in final_response.message
+    )
+    has_structure = all(section.label in final_response.message for section in tool_output.sections[:2])
+
+    if has_citations and has_titles and has_structure:
+        return JudgeDecision(
+            verdict="pass",
+            score=88,
+            grounded=True,
+            reason="回答已经形成双政策对比结构，并保留了可追溯的证据支撑。",
+            followup="如果用户继续追问，可进一步聚焦某个比较维度，例如支持重点或适用对象。",
+        )
+
+    return JudgeDecision(
+        verdict="weak",
+        score=62 if has_citations else 48,
+        grounded=has_citations,
+        reason="回答已经进入对比模式，但当前对比结构或证据完整性仍可继续加强。",
+        followup="建议补充更明确的比较对象或比较维度后继续执行 compare。",
+    )
