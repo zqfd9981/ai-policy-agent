@@ -20,9 +20,11 @@ class AgentState:
     - rewritten_query / alternative_queries / rewrite_keywords: query rewrite 结果
     - retry_count / max_retries: 当前允许的 repair 重试信息
     - repair_query / repair_strategy / repair_reason: repair 阶段生成的新查询和原因
+    - route_switch_count / route_switch_query: 自动切换执行路线时的状态
     - tool_output: 工具层返回的原始结果
     - answer_source: 最终回答来自 LLM 还是规则回退
     - judge_verdict / judge_score / judge_reason / judge_followup: 回答评估结果
+    - next_step_action / next_step_route / next_step_followups: 最终阶段的下一步动作建议
     - final_response: 最终给用户的响应
     - error_message: 工作流中记录的错误信息
     """
@@ -46,6 +48,11 @@ class AgentState:
     repair_strategy: str | None = None
     repair_reason: str | None = None
     repair_source: str | None = None
+    route_switch_count: int = 0
+    max_route_switches: int = 1
+    route_switch_query: str | None = None
+    route_switch_reason: str | None = None
+    route_switch_source: str | None = None
     tool_output: Any | None = None
     answer_source: str | None = None
     judge_verdict: str | None = None
@@ -53,6 +60,12 @@ class AgentState:
     judge_reason: str | None = None
     judge_followup: str | None = None
     judge_source: str | None = None
+    next_step_action: str | None = None
+    next_step_route: str | None = None
+    next_step_query: str | None = None
+    next_step_reason: str | None = None
+    next_step_followups: tuple[str, ...] = ()
+    next_step_source: str | None = None
     final_response: AgentResponse | None = None
     error_message: str | None = None
 
@@ -79,6 +92,17 @@ class AgentState:
         normalized_repair_strategy = self.repair_strategy.strip().lower() if self.repair_strategy else None
         normalized_repair_reason = self.repair_reason.strip() if self.repair_reason else None
         normalized_repair_source = self.repair_source.strip().lower() if self.repair_source else None
+        normalized_route_switch_count = max(0, int(self.route_switch_count))
+        normalized_max_route_switches = max(0, int(self.max_route_switches))
+        normalized_route_switch_query = (
+            self.route_switch_query.strip() if self.route_switch_query else None
+        )
+        normalized_route_switch_reason = (
+            self.route_switch_reason.strip() if self.route_switch_reason else None
+        )
+        normalized_route_switch_source = (
+            self.route_switch_source.strip().lower() if self.route_switch_source else None
+        )
         normalized_answer_source = self.answer_source.strip().lower() if self.answer_source else None
         normalized_judge_verdict = self.judge_verdict.strip().lower() if self.judge_verdict else None
         normalized_judge_reason = self.judge_reason.strip() if self.judge_reason else None
@@ -86,6 +110,18 @@ class AgentState:
         normalized_judge_source = self.judge_source.strip().lower() if self.judge_source else None
         normalized_judge_score = (
             max(0, min(100, int(self.judge_score))) if self.judge_score is not None else None
+        )
+        normalized_next_step_action = (
+            self.next_step_action.strip().lower() if self.next_step_action else None
+        )
+        normalized_next_step_route = self.next_step_route.strip().lower() if self.next_step_route else None
+        normalized_next_step_query = self.next_step_query.strip() if self.next_step_query else None
+        normalized_next_step_reason = self.next_step_reason.strip() if self.next_step_reason else None
+        normalized_next_step_followups = tuple(
+            item.strip() for item in self.next_step_followups if item.strip()
+        )
+        normalized_next_step_source = (
+            self.next_step_source.strip().lower() if self.next_step_source else None
         )
         normalized_error_message = self.error_message.strip() if self.error_message else None
 
@@ -105,12 +141,23 @@ class AgentState:
         object.__setattr__(self, "repair_strategy", normalized_repair_strategy)
         object.__setattr__(self, "repair_reason", normalized_repair_reason)
         object.__setattr__(self, "repair_source", normalized_repair_source)
+        object.__setattr__(self, "route_switch_count", normalized_route_switch_count)
+        object.__setattr__(self, "max_route_switches", normalized_max_route_switches)
+        object.__setattr__(self, "route_switch_query", normalized_route_switch_query)
+        object.__setattr__(self, "route_switch_reason", normalized_route_switch_reason)
+        object.__setattr__(self, "route_switch_source", normalized_route_switch_source)
         object.__setattr__(self, "answer_source", normalized_answer_source)
         object.__setattr__(self, "judge_verdict", normalized_judge_verdict)
         object.__setattr__(self, "judge_score", normalized_judge_score)
         object.__setattr__(self, "judge_reason", normalized_judge_reason)
         object.__setattr__(self, "judge_followup", normalized_judge_followup)
         object.__setattr__(self, "judge_source", normalized_judge_source)
+        object.__setattr__(self, "next_step_action", normalized_next_step_action)
+        object.__setattr__(self, "next_step_route", normalized_next_step_route)
+        object.__setattr__(self, "next_step_query", normalized_next_step_query)
+        object.__setattr__(self, "next_step_reason", normalized_next_step_reason)
+        object.__setattr__(self, "next_step_followups", normalized_next_step_followups)
+        object.__setattr__(self, "next_step_source", normalized_next_step_source)
         object.__setattr__(self, "error_message", normalized_error_message)
 
     @property
@@ -132,17 +179,29 @@ class AgentState:
         return self.retry_count < self.max_retries
 
     @property
+    def can_switch_route(self) -> bool:
+        """判断当前状态是否还允许再做一次自动 route switch。"""
+
+        return self.route_switch_count < self.max_route_switches
+
+    @property
     def effective_query(self) -> str:
         """
         返回当前真正应被工具层执行的查询。
 
         优先级保持明确：
-        1. repair 之后生成的新 query
-        2. rewrite 阶段生成的 query
-        3. 原始用户问题
+        1. route switch 之后生成的新 query
+        2. repair 之后生成的新 query
+        3. rewrite 阶段生成的 query
+        4. 原始用户问题
         """
 
-        return self.repair_query or self.rewritten_query or self.query.user_query
+        return (
+            self.route_switch_query
+            or self.repair_query
+            or self.rewritten_query
+            or self.query.user_query
+        )
 
     def with_route(self, route: str) -> "AgentState":
         """返回带有路由结果的新状态。"""
@@ -231,6 +290,50 @@ class AgentState:
             error_message=None,
         )
 
+    def with_route_switch(
+        self,
+        *,
+        route: str,
+        route_switch_query: str,
+        route_switch_reason: str,
+        route_switch_source: str,
+        intent: str | None = None,
+        answer_style: str | None = None,
+    ) -> "AgentState":
+        """
+        返回带有自动 route switch 结果的新状态。
+
+        这一步和 repair 的区别在于：
+        - repair 仍留在原 route 里补救
+        - route switch 是明确切到另一条执行主线
+        """
+
+        return replace(
+            self,
+            route=route,
+            intent=intent or self.intent,
+            answer_style=answer_style or self.answer_style,
+            route_switch_count=self.route_switch_count + 1,
+            route_switch_query=route_switch_query,
+            route_switch_reason=route_switch_reason,
+            route_switch_source=route_switch_source,
+            tool_output=None,
+            answer_source=None,
+            judge_verdict=None,
+            judge_score=None,
+            judge_reason=None,
+            judge_followup=None,
+            judge_source=None,
+            next_step_action=None,
+            next_step_route=None,
+            next_step_query=None,
+            next_step_reason=None,
+            next_step_followups=(),
+            next_step_source=None,
+            final_response=None,
+            error_message=None,
+        )
+
     def with_final_response(self, final_response: AgentResponse) -> "AgentState":
         """返回带有最终响应的新状态。"""
 
@@ -259,6 +362,28 @@ class AgentState:
             judge_reason=judge_reason,
             judge_followup=judge_followup,
             judge_source=judge_source,
+        )
+
+    def with_next_step_result(
+        self,
+        *,
+        next_step_action: str,
+        next_step_route: str,
+        next_step_query: str,
+        next_step_reason: str,
+        next_step_followups: tuple[str, ...],
+        next_step_source: str,
+    ) -> "AgentState":
+        """返回带有下一步动作建议的新状态。"""
+
+        return replace(
+            self,
+            next_step_action=next_step_action,
+            next_step_route=next_step_route,
+            next_step_query=next_step_query,
+            next_step_reason=next_step_reason,
+            next_step_followups=next_step_followups,
+            next_step_source=next_step_source,
         )
 
     def with_error(self, error_message: str) -> "AgentState":
@@ -294,6 +419,11 @@ class AgentState:
             "repair_strategy": self.repair_strategy,
             "repair_reason": self.repair_reason,
             "repair_source": self.repair_source,
+            "route_switch_count": self.route_switch_count,
+            "max_route_switches": self.max_route_switches,
+            "route_switch_query": self.route_switch_query,
+            "route_switch_reason": self.route_switch_reason,
+            "route_switch_source": self.route_switch_source,
             "tool_output": serialized_tool_output,
             "answer_source": self.answer_source,
             "judge_verdict": self.judge_verdict,
@@ -301,6 +431,12 @@ class AgentState:
             "judge_reason": self.judge_reason,
             "judge_followup": self.judge_followup,
             "judge_source": self.judge_source,
+            "next_step_action": self.next_step_action,
+            "next_step_route": self.next_step_route,
+            "next_step_query": self.next_step_query,
+            "next_step_reason": self.next_step_reason,
+            "next_step_followups": list(self.next_step_followups),
+            "next_step_source": self.next_step_source,
             "final_response": (
                 self.final_response.to_dict() if self.final_response is not None else None
             ),

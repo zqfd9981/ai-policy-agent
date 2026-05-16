@@ -238,8 +238,9 @@ def judge_summary_answer(
         section_label in final_response.message
         for section_label in ("政策概览", "支持重点", "适用对象", "申报条件")
     )
+    has_readable_support = summary_has_readable_support(tool_output)
 
-    if has_citations and has_structure:
+    if has_citations and has_structure and has_readable_support:
         return JudgeDecision(
             verdict="pass",
             score=90,
@@ -250,10 +251,12 @@ def judge_summary_answer(
 
     return JudgeDecision(
         verdict="weak",
-        score=68 if has_citations else 50,
+        score=55 if not has_readable_support else 68 if has_citations else 50,
         grounded=has_citations,
         reason=(
-            "回答已基本完成摘要任务，但结构完整性或证据支撑还不够稳定。"
+            "回答已经切到摘要模式，但当前摘要证据可读性偏弱，更适合继续追问或指定更明确的政策文本。"
+            if not has_readable_support
+            else "回答已基本完成摘要任务，但结构完整性或证据支撑还不够稳定。"
             if has_citations
             else "回答已尝试摘要，但当前证据支撑偏弱。"
         ),
@@ -272,6 +275,15 @@ def retrieval_has_readable_support(tool_output: RetrievePolicyOutput) -> bool:
     for item in tool_output.results[:3]:
         if item.title_path_str.strip():
             return True
+        if extract_readable_snippet(item.text):
+            return True
+    return False
+
+
+def summary_has_readable_support(tool_output: PolicySummaryOutput) -> bool:
+    """判断摘要证据里是否至少有一部分正文是可读的。"""
+
+    for item in tool_output.all_citations[:6]:
         if extract_readable_snippet(item.text):
             return True
     return False

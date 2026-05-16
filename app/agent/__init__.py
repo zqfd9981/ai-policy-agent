@@ -6,6 +6,7 @@ from app.agent.graph import (
     run_agent_workflow,
 )
 from app.agent.judge import JudgeDecision, PolicyAgentJudge
+from app.agent.next_step import NextStepDecision, PolicyAgentNextStepPlanner
 from app.agent.planner import PlannerDecision, PolicyAgentPlanner, plan_query
 from app.agent.repair import PolicyAgentRepairer, RepairDecision
 from app.agent.rewrite import PolicyAgentRewriter, RewriteDecision, rewrite_query
@@ -15,6 +16,7 @@ from app.agent.nodes import (
     fallback_planner_node,
     fallback_rewrite_node,
     judge_node,
+    next_step_node,
     planner_node,
     repair_node,
     retrieve_node,

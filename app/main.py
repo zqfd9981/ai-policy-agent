@@ -96,6 +96,13 @@ def render_state(state: AgentState) -> str:
         lines.append(f"repair_source: {state.repair_source}")
     if state.repair_reason:
         lines.extend(render_labeled_block("repair_reason", state.repair_reason))
+    lines.append(f"route_switch_count: {state.route_switch_count}/{state.max_route_switches}")
+    if state.route_switch_query:
+        lines.append(f"route_switch_query: {state.route_switch_query}")
+    if state.route_switch_source:
+        lines.append(f"route_switch_source: {state.route_switch_source}")
+    if state.route_switch_reason:
+        lines.extend(render_labeled_block("route_switch_reason", state.route_switch_reason))
     if state.answer_source:
         lines.append(f"answer_source: {state.answer_source}")
     if state.judge_verdict:
@@ -108,6 +115,23 @@ def render_state(state: AgentState) -> str:
         lines.extend(render_labeled_block("judge_reason", state.judge_reason))
     if state.judge_followup:
         lines.extend(render_labeled_block("judge_followup", state.judge_followup))
+    if state.next_step_action:
+        lines.append(f"next_step_action: {state.next_step_action}")
+    if state.next_step_route:
+        lines.append(f"next_step_route: {state.next_step_route}")
+    if state.next_step_query:
+        lines.append(f"next_step_query: {state.next_step_query}")
+    if state.next_step_source:
+        lines.append(f"next_step_source: {state.next_step_source}")
+    if state.next_step_reason:
+        lines.extend(render_labeled_block("next_step_reason", state.next_step_reason))
+    if state.next_step_followups:
+        lines.extend(
+            render_labeled_block(
+                "next_step_followups",
+                "\n".join(state.next_step_followups),
+            )
+        )
 
     lines.extend(render_labeled_block("message", response.message))
 

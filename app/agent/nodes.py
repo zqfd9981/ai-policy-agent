@@ -4,10 +4,15 @@ from collections.abc import Callable
 
 from app.agent.answer import PolicyAgentAnswerer, fallback_answer
 from app.agent.judge import PolicyAgentJudge, fallback_judge
+from app.agent.next_step import (
+    PolicyAgentNextStepPlanner,
+    append_next_step_guidance,
+    fallback_next_step,
+)
 from app.agent.planner import PolicyAgentPlanner
 from app.agent.repair import PolicyAgentRepairer, fallback_repair
 from app.agent.rewrite import PolicyAgentRewriter
-from app.agent.router import ROUTE_RETRIEVE, ROUTE_SUMMARIZE, ROUTE_UNSUPPORTED
+from app.agent.router import ROUTE_COMPARE, ROUTE_RETRIEVE, ROUTE_SUMMARIZE, ROUTE_UNSUPPORTED
 from app.agent.router import detect_intent_route, route_state
 from app.agent.state import AgentState
 from app.models.response import AgentResponse
@@ -389,6 +394,65 @@ def judge_node(
         judge_followup=decision.followup,
         judge_source=judge_source,
     )
+
+
+def next_step_node(
+    state: AgentState,
+    *,
+    planner: PolicyAgentNextStepPlanner | None = None,
+) -> AgentState:
+    """
+    标准 next-step node。
+
+    这层负责在整轮执行尾部做真正的“后处理分流”：
+    - 当前回答已经足够好 -> 结束
+    - 当前更适合自动切摘要 -> 记录 route switch，交给 graph 继续跑
+    - 当前不适合自动继续 -> 把 follow-up / compare 建议追加到最终回答
+    """
+
+    if state.final_response is None:
+        error_message = "next_step node 缺少可处理的 final_response。"
+        return state.with_error(error_message)
+
+    active_planner = planner
+    if active_planner is None or not active_planner.is_available:
+        decision = fallback_next_step(state)
+        planner_source = "rule"
+    else:
+        try:
+            decision = active_planner.decide(state)
+            planner_source = "llm"
+        except Exception:
+            decision = fallback_next_step(state)
+            planner_source = "rule"
+
+    state_with_decision = state.with_next_step_result(
+        next_step_action=decision.action,
+        next_step_route=decision.target_route,
+        next_step_query=decision.next_query,
+        next_step_reason=decision.reason,
+        next_step_followups=decision.followups,
+        next_step_source=planner_source,
+    )
+
+    if decision.action == "auto_switch_route" and decision.target_route == ROUTE_SUMMARIZE:
+        return state_with_decision.with_route_switch(
+            route=ROUTE_SUMMARIZE,
+            route_switch_query=decision.next_query,
+            route_switch_reason=decision.reason,
+            route_switch_source=planner_source,
+            intent=ROUTE_SUMMARIZE,
+            answer_style="structured",
+        )
+
+    if decision.action in {"ask_followup", "suggest_route"}:
+        enriched_response = append_next_step_guidance(
+            state_with_decision.final_response,
+            decision,
+        )
+        return state_with_decision.with_final_response(enriched_response)
+
+    return state_with_decision
 
 
 def select_node(route: str | None) -> AgentNode:

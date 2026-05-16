@@ -5,12 +5,14 @@ from typing import cast
 
 from app.agent.answer import PolicyAgentAnswerer
 from app.agent.judge import PolicyAgentJudge
+from app.agent.next_step import PolicyAgentNextStepPlanner
 from app.agent.planner import PolicyAgentPlanner
 from app.agent.repair import PolicyAgentRepairer
 from app.agent.rewrite import PolicyAgentRewriter
 from app.agent.nodes import (
     answer_node,
     judge_node,
+    next_step_node,
     planner_node,
     repair_node,
     retrieve_node,
@@ -45,6 +47,7 @@ class PolicyAgentGraph:
     answerer: PolicyAgentAnswerer | None = None
     judge: PolicyAgentJudge | None = None
     repairer: PolicyAgentRepairer | None = None
+    next_step_planner: PolicyAgentNextStepPlanner | None = None
     retrieve_tool: RetrievePolicyTool | None = None
     summarize_tool: SummarizePolicyTool | None = None
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES
@@ -77,10 +80,28 @@ class PolicyAgentGraph:
             first_pass_state,
             repairer=self.repairer,
         )
-        if repaired_state.retry_count == first_pass_state.retry_count:
-            return repaired_state
+        current_state = (
+            repaired_state
+            if repaired_state.retry_count == first_pass_state.retry_count
+            else self.run_execution_cycle(repaired_state)
+        )
 
-        return self.run_execution_cycle(repaired_state)
+        final_state = next_step_node(
+            current_state,
+            planner=self.next_step_planner,
+        )
+
+        # 如果 next-step 决策器明确要求自动切摘要，
+        # graph 会在这里再补跑一轮 summarize -> answer -> judge，
+        # 然后再次进入 next-step，让最终输出形态稳定下来。
+        if final_state.route_switch_count > current_state.route_switch_count:
+            switched_state = self.run_execution_cycle(final_state)
+            return next_step_node(
+                switched_state,
+                planner=self.next_step_planner,
+            )
+
+        return final_state
 
     def run_and_get_response(
         self,
@@ -165,6 +186,7 @@ def run_agent_workflow(
     answerer: PolicyAgentAnswerer | None = None,
     judge: PolicyAgentJudge | None = None,
     repairer: PolicyAgentRepairer | None = None,
+    next_step_planner: PolicyAgentNextStepPlanner | None = None,
     retrieve_tool: RetrievePolicyTool | None = None,
     summarize_tool: SummarizePolicyTool | None = None,
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES,
@@ -177,6 +199,7 @@ def run_agent_workflow(
         answerer=answerer,
         judge=judge,
         repairer=repairer,
+        next_step_planner=next_step_planner,
         retrieve_tool=retrieve_tool,
         summarize_tool=summarize_tool,
         supported_routes=cast(frozenset[str], supported_routes),
@@ -194,6 +217,7 @@ def run_agent_query(
     answerer: PolicyAgentAnswerer | None = None,
     judge: PolicyAgentJudge | None = None,
     repairer: PolicyAgentRepairer | None = None,
+    next_step_planner: PolicyAgentNextStepPlanner | None = None,
     retrieve_tool: RetrievePolicyTool | None = None,
     summarize_tool: SummarizePolicyTool | None = None,
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES,
@@ -206,6 +230,7 @@ def run_agent_query(
         answerer=answerer,
         judge=judge,
         repairer=repairer,
+        next_step_planner=next_step_planner,
         retrieve_tool=retrieve_tool,
         summarize_tool=summarize_tool,
         supported_routes=cast(frozenset[str], supported_routes),
