@@ -2,18 +2,149 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from app.agent.answer import PolicyAgentAnswerer, fallback_answer
+from app.agent.judge import PolicyAgentJudge, fallback_judge
+from app.agent.planner import PolicyAgentPlanner
+from app.agent.rewrite import PolicyAgentRewriter
 from app.agent.router import ROUTE_RETRIEVE, ROUTE_SUMMARIZE, ROUTE_UNSUPPORTED
+from app.agent.router import detect_intent_route, route_state
 from app.agent.state import AgentState
 from app.models.response import AgentResponse
-from app.tools.retrieve_policy import RetrievePolicyOutput, RetrievePolicyTool
+from app.tools.retrieve_policy import RetrievePolicyTool
 from app.tools.summarize_policy import (
-    PolicySummaryOutput,
     SummarizePolicyTool,
-    render_policy_summary,
 )
 
 
 AgentNode = Callable[[AgentState], AgentState]
+
+
+def planner_node(
+    state: AgentState,
+    *,
+    planner: PolicyAgentPlanner | None = None,
+    supported_routes: frozenset[str],
+) -> AgentState:
+    """
+    标准 planner node。
+
+    这里统一承接“任务理解”这一步：
+    - 优先尝试 LLM planner
+    - 失败时回退到规则路由
+    - 无论来源如何，都把统一形状的规划结果写回 state
+    """
+
+    active_planner = planner
+    if active_planner is None or not active_planner.is_available:
+        return fallback_planner_node(
+            state,
+            supported_routes=supported_routes,
+        )
+
+    try:
+        decision = active_planner.decide(state.query.user_query)
+    except Exception:
+        return fallback_planner_node(
+            state,
+            supported_routes=supported_routes,
+        )
+
+    route = decision.intent if decision.intent in supported_routes else ROUTE_UNSUPPORTED
+    return state.with_planner_result(
+        intent=decision.intent,
+        route=route,
+        needs_rag=decision.needs_rag,
+        needs_rewrite=decision.needs_rewrite,
+        answer_style=decision.answer_style,
+        planner_reason=decision.reason,
+        planner_source="llm",
+    )
+
+
+def fallback_planner_node(
+    state: AgentState,
+    *,
+    supported_routes: frozenset[str],
+) -> AgentState:
+    """
+    规则版 planner node。
+
+    即使当前没启用 LLM，我们也尽量把 state 填成和 LLM planner
+    一样的字段形状，避免后面 rewrite / answer 节点区分两套输入。
+    """
+
+    routed_state = route_state(
+        state,
+        supported_routes=supported_routes,
+    )
+    detected_intent = detect_intent_route(state.query)
+
+    answer_style = "direct"
+    if detected_intent == ROUTE_SUMMARIZE:
+        answer_style = "structured"
+
+    return routed_state.with_planner_result(
+        intent=detected_intent,
+        route=routed_state.route or ROUTE_UNSUPPORTED,
+        needs_rag=detected_intent != "chat",
+        needs_rewrite=detected_intent in {ROUTE_RETRIEVE, ROUTE_SUMMARIZE},
+        answer_style=answer_style,
+        planner_reason="当前未启用 LLM planner，使用规则路由结果作为兜底规划。",
+        planner_source="rule",
+    )
+
+
+def rewrite_node(
+    state: AgentState,
+    *,
+    rewriter: PolicyAgentRewriter | None = None,
+) -> AgentState:
+    """
+    标准 rewrite node。
+
+    当前策略尽量保守：
+    - planner 判断不需要 rewrite 时，直接把原始 query 透传下去
+    - 如果启用了 LLM rewriter，就尝试生成更适合检索的查询
+    - 失败时退回到轻量规则改写
+    """
+
+    if state.needs_rewrite is False:
+        return state.with_rewrite_result(
+            rewritten_query=state.query.user_query,
+            rewrite_reason="planner 判断当前请求不需要额外改写，直接使用原始 query。",
+            rewrite_source="skip",
+        )
+
+    active_rewriter = rewriter
+    if active_rewriter is None or not active_rewriter.is_available:
+        return fallback_rewrite_node(state)
+
+    try:
+        decision = active_rewriter.rewrite(
+            state.query.user_query,
+            intent=state.intent,
+        )
+    except Exception:
+        return fallback_rewrite_node(state)
+
+    return state.with_rewrite_result(
+        rewritten_query=decision.primary_query,
+        alternative_queries=decision.alternative_queries,
+        rewrite_keywords=decision.keywords,
+        rewrite_reason=decision.rewrite_reason,
+        rewrite_source="llm",
+    )
+
+
+def fallback_rewrite_node(state: AgentState) -> AgentState:
+    """规则版 rewrite node。"""
+
+    normalized_query = state.query.user_query.strip()
+    return state.with_rewrite_result(
+        rewritten_query=normalized_query,
+        rewrite_reason="当前未启用 LLM rewriter，使用原始 query 作为兜底检索查询。",
+        rewrite_source="rule",
+    )
 
 
 def retrieve_node(
@@ -34,8 +165,9 @@ def retrieve_node(
     route = state.route or ROUTE_RETRIEVE
 
     try:
+        query_for_retrieval = state.rewritten_query or state.query.user_query
         tool_output = active_tool.run(
-            state.query.user_query,
+            query_for_retrieval,
             top_k=state.query.top_k,
         )
     except Exception as error:
@@ -49,14 +181,7 @@ def retrieve_node(
             )
         )
 
-    citations = tuple(result.to_dict() for result in tool_output.results)
-    response = AgentResponse(
-        success=True,
-        route=route,
-        message=_build_retrieve_message(tool_output),
-        citations=citations,
-    )
-    return state.with_tool_output(tool_output).with_final_response(response)
+    return state.with_tool_output(tool_output)
 
 
 def summarize_node(
@@ -70,8 +195,9 @@ def summarize_node(
     route = state.route or ROUTE_SUMMARIZE
 
     try:
+        query_for_summary = state.rewritten_query or state.query.user_query
         tool_output = active_tool.run(
-            state.query.user_query,
+            query_for_summary,
             top_k=state.query.top_k,
         )
     except Exception as error:
@@ -85,14 +211,63 @@ def summarize_node(
             )
         )
 
-    citations = tuple(item.to_dict() for item in tool_output.all_citations)
-    response = AgentResponse(
-        success=True,
-        route=route,
-        message=render_policy_summary(tool_output),
-        citations=citations,
+    return state.with_tool_output(tool_output)
+
+
+def answer_node(
+    state: AgentState,
+    *,
+    answerer: PolicyAgentAnswerer | None = None,
+) -> AgentState:
+    """
+    标准 answer node。
+
+    这层负责把工具输出从“中间证据”变成“最终回答”：
+    - 如果启用了 LLM answerer，就让模型组织自然语言答案
+    - 如果没有，就回退到规则版最终回答
+    """
+
+    if state.tool_output is None:
+        error_message = "answer node 缺少可用的 tool_output。"
+        return state.with_error(error_message).with_final_response(
+            AgentResponse(
+                success=False,
+                route=state.route or ROUTE_UNSUPPORTED,
+                message="当前没有可用于生成回答的证据。",
+                error_message=error_message,
+            )
+        )
+
+    active_answerer = answerer
+    if active_answerer is None or not active_answerer.is_available:
+        draft = fallback_answer(tool_output=state.tool_output)
+        return state.with_answer_source(draft.source).with_final_response(
+            AgentResponse(
+                success=True,
+                route=state.route or ROUTE_UNSUPPORTED,
+                message=draft.message,
+                citations=draft.citations,
+            )
+        )
+
+    try:
+        draft = active_answerer.answer(
+            user_query=state.query.user_query,
+            intent=state.intent,
+            answer_style=state.answer_style,
+            tool_output=state.tool_output,
+        )
+    except Exception:
+        draft = fallback_answer(tool_output=state.tool_output)
+
+    return state.with_answer_source(draft.source).with_final_response(
+        AgentResponse(
+            success=True,
+            route=state.route or ROUTE_UNSUPPORTED,
+            message=draft.message,
+            citations=draft.citations,
+        )
     )
-    return state.with_tool_output(tool_output).with_final_response(response)
 
 
 def unsupported_node(state: AgentState) -> AgentState:
@@ -111,6 +286,62 @@ def unsupported_node(state: AgentState) -> AgentState:
     )
 
 
+def judge_node(
+    state: AgentState,
+    *,
+    judge: PolicyAgentJudge | None = None,
+) -> AgentState:
+    """
+    标准 judge node。
+
+    这层负责在最终回答生成后补一轮“回答后自检”：
+    - 如果启用了 LLM judge，就做结构化质量评估
+    - 如果没有，就回退到规则版质量评估
+    - 当前只记录评估结果，不直接触发 retry
+    """
+
+    if state.final_response is None:
+        error_message = "judge node 缺少可评估的 final_response。"
+        return state.with_error(error_message)
+
+    active_judge = judge
+    if active_judge is None or not active_judge.is_available:
+        decision = fallback_judge(
+            tool_output=state.tool_output,
+            final_response=state.final_response,
+        )
+        return state.with_judge_result(
+            judge_verdict=decision.verdict,
+            judge_score=decision.score,
+            judge_reason=decision.reason,
+            judge_followup=decision.followup,
+            judge_source="rule",
+        )
+
+    try:
+        decision = active_judge.judge(
+            user_query=state.query.user_query,
+            intent=state.intent,
+            tool_output=state.tool_output,
+            final_response=state.final_response,
+        )
+        judge_source = "llm"
+    except Exception:
+        decision = fallback_judge(
+            tool_output=state.tool_output,
+            final_response=state.final_response,
+        )
+        judge_source = "rule"
+
+    return state.with_judge_result(
+        judge_verdict=decision.verdict,
+        judge_score=decision.score,
+        judge_reason=decision.reason,
+        judge_followup=decision.followup,
+        judge_source=judge_source,
+    )
+
+
 def select_node(route: str | None) -> AgentNode:
     """根据路由选择对应节点函数。"""
 
@@ -122,12 +353,3 @@ def select_node(route: str | None) -> AgentNode:
         return summarize_node
 
     return unsupported_node
-
-
-def _build_retrieve_message(tool_output: RetrievePolicyOutput) -> str:
-    """根据检索结果生成最小可展示消息。"""
-
-    if tool_output.result_count == 0:
-        return "未检索到相关政策片段。"
-
-    return f"已检索到 {tool_output.result_count} 条相关政策片段。"

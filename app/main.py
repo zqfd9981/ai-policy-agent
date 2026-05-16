@@ -11,9 +11,9 @@ if __package__ in (None, ""):
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.agent.graph import run_agent_query
+from app.agent.graph import run_agent_workflow
 from app.models.query import DEFAULT_QUERY_TOP_K
-from app.models.response import AgentResponse
+from app.agent.state import AgentState
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -50,13 +50,55 @@ def resolve_query(query_parts: list[str]) -> str:
     return input("请输入政策问题: ").strip()
 
 
-def render_response(response: AgentResponse) -> str:
-    """把 AgentResponse 渲染成适合终端展示的文本。"""
+def render_state(state: AgentState) -> str:
+    """把最终 AgentState 渲染成适合终端展示的文本。"""
+
+    response = state.final_response
+    if response is None:
+        return "Agent 未生成最终响应。"
 
     lines = [
         f"success: {response.success}",
         f"route: {response.route}",
+        f"intent: {state.intent or 'unknown'}",
+        f"planner_source: {state.planner_source or 'unknown'}",
     ]
+    if state.needs_rag is not None:
+        lines.append(f"needs_rag: {state.needs_rag}")
+    if state.needs_rewrite is not None:
+        lines.append(f"needs_rewrite: {state.needs_rewrite}")
+    if state.answer_style:
+        lines.append(f"answer_style: {state.answer_style}")
+    if state.planner_reason:
+        lines.extend(render_labeled_block("planner_reason", state.planner_reason))
+    if state.rewritten_query:
+        lines.append(f"rewritten_query: {state.rewritten_query}")
+    if state.rewrite_source:
+        lines.append(f"rewrite_source: {state.rewrite_source}")
+    if state.rewrite_reason:
+        lines.extend(render_labeled_block("rewrite_reason", state.rewrite_reason))
+    if state.rewrite_keywords:
+        lines.append(f"rewrite_keywords: {', '.join(state.rewrite_keywords)}")
+    if state.alternative_queries:
+        lines.extend(
+            render_labeled_block(
+                "alternative_queries",
+                "\n".join(state.alternative_queries),
+            )
+        )
+    if state.answer_source:
+        lines.append(f"answer_source: {state.answer_source}")
+    if state.judge_verdict:
+        lines.append(f"judge_verdict: {state.judge_verdict}")
+    if state.judge_score is not None:
+        lines.append(f"judge_score: {state.judge_score}")
+    if state.judge_source:
+        lines.append(f"judge_source: {state.judge_source}")
+    if state.judge_reason:
+        lines.extend(render_labeled_block("judge_reason", state.judge_reason))
+    if state.judge_followup:
+        lines.extend(render_labeled_block("judge_followup", state.judge_followup))
+
     lines.extend(render_labeled_block("message", response.message))
 
     if response.error_message:
@@ -122,16 +164,19 @@ def main() -> None:
     if not query:
         parser.error("query 不能为空。")
 
-    response = run_agent_query(
+    state = run_agent_workflow(
         query,
         top_k=args.top_k,
     )
+    response = state.final_response
+    if response is None:
+        parser.error("Agent 未生成最终响应。")
 
     if args.json:
-        print(json.dumps(response.to_dict(), ensure_ascii=False, indent=2))
+        print(json.dumps(state.to_dict(), ensure_ascii=False, indent=2))
         return
 
-    print(render_response(response))
+    print(render_state(state))
 
 
 if __name__ == "__main__":

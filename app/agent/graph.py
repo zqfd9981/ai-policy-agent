@@ -3,8 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import cast
 
-from app.agent.nodes import retrieve_node, select_node, summarize_node
-from app.agent.router import DEFAULT_SUPPORTED_ROUTES, route_state
+from app.agent.answer import PolicyAgentAnswerer
+from app.agent.judge import PolicyAgentJudge
+from app.agent.planner import PolicyAgentPlanner
+from app.agent.rewrite import PolicyAgentRewriter
+from app.agent.nodes import (
+    answer_node,
+    judge_node,
+    planner_node,
+    retrieve_node,
+    rewrite_node,
+    select_node,
+    summarize_node,
+)
+from app.agent.router import DEFAULT_SUPPORTED_ROUTES
 from app.agent.state import AgentState
 from app.models.query import DEFAULT_QUERY_TOP_K, AgentQuery
 from app.models.response import AgentResponse
@@ -24,6 +36,10 @@ class PolicyAgentGraph:
     - 返回最终状态 / 最终响应
     """
 
+    planner: PolicyAgentPlanner | None = None
+    rewriter: PolicyAgentRewriter | None = None
+    answerer: PolicyAgentAnswerer | None = None
+    judge: PolicyAgentJudge | None = None
     retrieve_tool: RetrievePolicyTool | None = None
     summarize_tool: SummarizePolicyTool | None = None
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES
@@ -37,11 +53,24 @@ class PolicyAgentGraph:
         """执行完整 Agent 工作流，并返回最终状态。"""
 
         state = build_initial_state(query, top_k=top_k)
-        routed_state = route_state(
+        planned_state = planner_node(
             state,
+            planner=self.planner,
             supported_routes=self.supported_routes,
         )
-        return self.execute_node(routed_state)
+        rewritten_state = rewrite_node(
+            planned_state,
+            rewriter=self.rewriter,
+        )
+        executed_state = self.execute_node(rewritten_state)
+        answered_state = answer_node(
+            executed_state,
+            answerer=self.answerer,
+        )
+        return judge_node(
+            answered_state,
+            judge=self.judge,
+        )
 
     def run_and_get_response(
         self,
@@ -97,6 +126,10 @@ def run_agent_workflow(
     query: AgentQuery | str,
     *,
     top_k: int = DEFAULT_QUERY_TOP_K,
+    planner: PolicyAgentPlanner | None = None,
+    rewriter: PolicyAgentRewriter | None = None,
+    answerer: PolicyAgentAnswerer | None = None,
+    judge: PolicyAgentJudge | None = None,
     retrieve_tool: RetrievePolicyTool | None = None,
     summarize_tool: SummarizePolicyTool | None = None,
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES,
@@ -104,6 +137,10 @@ def run_agent_workflow(
     """函数式入口：执行一次完整 Agent 工作流。"""
 
     graph = PolicyAgentGraph(
+        planner=planner,
+        rewriter=rewriter,
+        answerer=answerer,
+        judge=judge,
         retrieve_tool=retrieve_tool,
         summarize_tool=summarize_tool,
         supported_routes=cast(frozenset[str], supported_routes),
@@ -115,6 +152,10 @@ def run_agent_query(
     query: AgentQuery | str,
     *,
     top_k: int = DEFAULT_QUERY_TOP_K,
+    planner: PolicyAgentPlanner | None = None,
+    rewriter: PolicyAgentRewriter | None = None,
+    answerer: PolicyAgentAnswerer | None = None,
+    judge: PolicyAgentJudge | None = None,
     retrieve_tool: RetrievePolicyTool | None = None,
     summarize_tool: SummarizePolicyTool | None = None,
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES,
@@ -122,6 +163,10 @@ def run_agent_query(
     """函数式入口：执行一次完整 Agent 工作流并返回最终响应。"""
 
     graph = PolicyAgentGraph(
+        planner=planner,
+        rewriter=rewriter,
+        answerer=answerer,
+        judge=judge,
         retrieve_tool=retrieve_tool,
         summarize_tool=summarize_tool,
         supported_routes=cast(frozenset[str], supported_routes),
