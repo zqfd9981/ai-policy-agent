@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -184,6 +185,27 @@ def resolve_compare_doc_ids(
             f"根据 query 中的政策标题线索匹配到 {matched_doc_ids[0]} 与 {matched_doc_ids[1]}。",
         )
 
+    # 对“苏州 vs 杭州”“北京 vs 上海”这类地区型 compare，
+    # 仅靠标题匹配不够稳，所以这里单独补一层地区感知的文档定位。
+    mentioned_regions = extract_regions_from_query(query, metadata_map)
+    if len(mentioned_regions) >= 2:
+        retrieval_output = (retrieve_tool or RetrievePolicyTool()).run(query, top_k=max(4, int(top_k)))
+        region_doc_ids = resolve_compare_doc_ids_by_regions(
+            query,
+            mentioned_regions=mentioned_regions,
+            metadata_map=metadata_map,
+            retrieval_output=retrieval_output,
+        )
+        if len(region_doc_ids) >= 2:
+            return (
+                region_doc_ids[0],
+                region_doc_ids[1],
+                (
+                    f"根据 query 中的地区线索 {mentioned_regions[0]} 与 {mentioned_regions[1]}，"
+                    f"定位到 {region_doc_ids[0]} 与 {region_doc_ids[1]}。"
+                ),
+            )
+
     retrieval_output = (retrieve_tool or RetrievePolicyTool()).run(query, top_k=max(4, int(top_k)))
     resolved_doc_ids = choose_compare_doc_ids_from_retrieval(retrieval_output)
     if len(resolved_doc_ids) < 2:
@@ -246,6 +268,172 @@ def match_compare_doc_ids_from_query(
             break
 
     return tuple(matched_doc_ids[:2])
+
+
+def extract_regions_from_query(
+    query: str,
+    metadata_map: dict[str, PolicyMetadata],
+) -> tuple[str, ...]:
+    """从 query 中按出现顺序提取地区线索。"""
+
+    region_positions: list[tuple[int, str]] = []
+    seen_regions: set[str] = set()
+
+    for region in {item.region for item in metadata_map.values()}:
+        start_index = query.find(region)
+        if start_index < 0 or region in seen_regions:
+            continue
+        region_positions.append((start_index, region))
+        seen_regions.add(region)
+
+    region_positions.sort(key=lambda item: item[0])
+    return tuple(region for _, region in region_positions)
+
+
+def resolve_compare_doc_ids_by_regions(
+    query: str,
+    *,
+    mentioned_regions: tuple[str, ...],
+    metadata_map: dict[str, PolicyMetadata],
+    retrieval_output: RetrievePolicyOutput,
+) -> tuple[str, ...]:
+    """
+    根据 query 中出现的地区线索，为每个地区各选一篇最合适的政策。
+
+    设计原则：
+    - 优先复用 retrieval 已经命中的文档，避免纯 metadata 猜测太飘
+    - 如果某个地区在 retrieval 里完全没命中，再退回 metadata 启发式选择
+    - 第一版只取 query 里前两个地区，保持 compare 输出稳定
+    """
+
+    selected_doc_ids: list[str] = []
+    for region in mentioned_regions[:2]:
+        doc_id = select_best_doc_for_region(
+            query,
+            region=region,
+            metadata_map=metadata_map,
+            retrieval_output=retrieval_output,
+        )
+        if doc_id is None or doc_id in selected_doc_ids:
+            continue
+        selected_doc_ids.append(doc_id)
+
+    return tuple(selected_doc_ids)
+
+
+def select_best_doc_for_region(
+    query: str,
+    *,
+    region: str,
+    metadata_map: dict[str, PolicyMetadata],
+    retrieval_output: RetrievePolicyOutput,
+) -> str | None:
+    """从指定地区的候选政策里选出最适合当前 compare query 的一篇。"""
+
+    retrieval_doc_scores: dict[str, float] = {}
+    for item in retrieval_output.results:
+        item_region = str(item.metadata.get("region", ""))
+        if item_region != region:
+            continue
+        retrieval_doc_scores[item.doc_id] = retrieval_doc_scores.get(item.doc_id, 0.0) + float(item.score)
+
+    if retrieval_doc_scores:
+        # 先看 retrieval 在该地区已经稳定命中了哪些文档。
+        # 这样可以最大化复用检索层给出的主题相关性信号。
+        return max(
+            retrieval_doc_scores.items(),
+            key=lambda pair: (
+                pair[1],
+                score_metadata_candidate(query, metadata_map[pair[0]]),
+            ),
+        )[0]
+
+    region_candidates = [item for item in metadata_map.values() if item.region == region]
+    if not region_candidates:
+        return None
+
+    return max(
+        region_candidates,
+        key=lambda item: score_metadata_candidate(query, item),
+    ).doc_id
+
+
+def score_metadata_candidate(query: str, metadata: PolicyMetadata) -> tuple[int, str]:
+    """
+    为地区内候选政策打一个轻量启发式分数。
+
+    第一版不追求“绝对最准”，而是优先保证这类规则清晰、可解释：
+    - 与 query 关键词越贴近，分越高
+    - core 文档优先
+    - 同分时默认让更新、更像总纲/配套的政策排在前面
+    """
+
+    score = 0
+    normalized_query = query.lower()
+    title_text = metadata.title.lower()
+    theme_text = metadata.theme.lower()
+    notes_text = metadata.notes.lower()
+
+    for keyword in extract_compare_query_keywords(query):
+        normalized_keyword = keyword.lower()
+        if normalized_keyword in title_text:
+            score += 5
+        if normalized_keyword in theme_text:
+            score += 4
+        if normalized_keyword in notes_text:
+            score += 2
+
+    if metadata.tier == "core":
+        score += 3
+
+    if any(marker in metadata.title for marker in ("行动方案", "行动计划", "实施方案", "若干措施")):
+        score += 2
+
+    if "人工智能" in metadata.title or "人工智能" in metadata.theme:
+        score += 2
+
+    return score, parse_publish_date_key(metadata.publish_date)
+
+
+def extract_compare_query_keywords(query: str) -> tuple[str, ...]:
+    """从 compare query 中提炼一批轻量关键词，供 metadata 打分使用。"""
+
+    candidates = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9+\-]{2,}", query)
+    stopwords = {
+        "对比",
+        "比较",
+        "差异",
+        "区别",
+        "不同",
+        "相关政策",
+        "政策",
+        "一下",
+    }
+
+    keywords: list[str] = []
+    for item in candidates:
+        normalized_item = item.strip()
+        if not normalized_item or normalized_item in stopwords:
+            continue
+        if normalized_item not in keywords:
+            keywords.append(normalized_item)
+
+    return tuple(keywords)
+
+
+def parse_publish_date_key(publish_date: str) -> tuple[int, int, int]:
+    """把发布日期字符串转成可稳定比较的日期键。"""
+
+    parts = publish_date.split("/")
+    if len(parts) != 3:
+        return (0, 0, 0)
+
+    try:
+        year, month, day = (int(part) for part in parts)
+    except ValueError:
+        return (0, 0, 0)
+
+    return (year, month, day)
 
 
 def choose_compare_doc_ids_from_retrieval(
