@@ -18,6 +18,8 @@ class AgentState:
     - intent: planner 或 router 判断的意图
     - needs_rag / needs_rewrite / answer_style: 后续 LLM Agent 链路的规划信息
     - rewritten_query / alternative_queries / rewrite_keywords: query rewrite 结果
+    - retry_count / max_retries: 当前允许的 repair 重试信息
+    - repair_query / repair_strategy / repair_reason: repair 阶段生成的新查询和原因
     - tool_output: 工具层返回的原始结果
     - answer_source: 最终回答来自 LLM 还是规则回退
     - judge_verdict / judge_score / judge_reason / judge_followup: 回答评估结果
@@ -38,6 +40,12 @@ class AgentState:
     rewrite_keywords: tuple[str, ...] = ()
     rewrite_reason: str | None = None
     rewrite_source: str | None = None
+    retry_count: int = 0
+    max_retries: int = 1
+    repair_query: str | None = None
+    repair_strategy: str | None = None
+    repair_reason: str | None = None
+    repair_source: str | None = None
     tool_output: Any | None = None
     answer_source: str | None = None
     judge_verdict: str | None = None
@@ -65,6 +73,12 @@ class AgentState:
         )
         normalized_rewrite_reason = self.rewrite_reason.strip() if self.rewrite_reason else None
         normalized_rewrite_source = self.rewrite_source.strip().lower() if self.rewrite_source else None
+        normalized_retry_count = max(0, int(self.retry_count))
+        normalized_max_retries = max(0, int(self.max_retries))
+        normalized_repair_query = self.repair_query.strip() if self.repair_query else None
+        normalized_repair_strategy = self.repair_strategy.strip().lower() if self.repair_strategy else None
+        normalized_repair_reason = self.repair_reason.strip() if self.repair_reason else None
+        normalized_repair_source = self.repair_source.strip().lower() if self.repair_source else None
         normalized_answer_source = self.answer_source.strip().lower() if self.answer_source else None
         normalized_judge_verdict = self.judge_verdict.strip().lower() if self.judge_verdict else None
         normalized_judge_reason = self.judge_reason.strip() if self.judge_reason else None
@@ -85,6 +99,12 @@ class AgentState:
         object.__setattr__(self, "rewrite_keywords", normalized_rewrite_keywords)
         object.__setattr__(self, "rewrite_reason", normalized_rewrite_reason)
         object.__setattr__(self, "rewrite_source", normalized_rewrite_source)
+        object.__setattr__(self, "retry_count", normalized_retry_count)
+        object.__setattr__(self, "max_retries", normalized_max_retries)
+        object.__setattr__(self, "repair_query", normalized_repair_query)
+        object.__setattr__(self, "repair_strategy", normalized_repair_strategy)
+        object.__setattr__(self, "repair_reason", normalized_repair_reason)
+        object.__setattr__(self, "repair_source", normalized_repair_source)
         object.__setattr__(self, "answer_source", normalized_answer_source)
         object.__setattr__(self, "judge_verdict", normalized_judge_verdict)
         object.__setattr__(self, "judge_score", normalized_judge_score)
@@ -104,6 +124,25 @@ class AgentState:
         """判断当前状态是否已经记录错误。"""
 
         return bool(self.error_message)
+
+    @property
+    def can_retry(self) -> bool:
+        """判断当前状态是否还允许再做一次 repair。"""
+
+        return self.retry_count < self.max_retries
+
+    @property
+    def effective_query(self) -> str:
+        """
+        返回当前真正应被工具层执行的查询。
+
+        优先级保持明确：
+        1. repair 之后生成的新 query
+        2. rewrite 阶段生成的 query
+        3. 原始用户问题
+        """
+
+        return self.repair_query or self.rewritten_query or self.query.user_query
 
     def with_route(self, route: str) -> "AgentState":
         """返回带有路由结果的新状态。"""
@@ -157,6 +196,39 @@ class AgentState:
             rewrite_keywords=rewrite_keywords,
             rewrite_reason=rewrite_reason,
             rewrite_source=rewrite_source,
+        )
+
+    def with_repair_result(
+        self,
+        *,
+        repair_query: str,
+        repair_strategy: str,
+        repair_reason: str,
+        repair_source: str,
+    ) -> "AgentState":
+        """
+        返回带有 repair 结果的新状态。
+
+        这里会顺手清空上一轮执行产生的 tool_output / answer / judge 结果，
+        因为接下来我们要基于新的 query 再跑一轮执行链。
+        """
+
+        return replace(
+            self,
+            retry_count=self.retry_count + 1,
+            repair_query=repair_query,
+            repair_strategy=repair_strategy,
+            repair_reason=repair_reason,
+            repair_source=repair_source,
+            tool_output=None,
+            answer_source=None,
+            judge_verdict=None,
+            judge_score=None,
+            judge_reason=None,
+            judge_followup=None,
+            judge_source=None,
+            final_response=None,
+            error_message=None,
         )
 
     def with_final_response(self, final_response: AgentResponse) -> "AgentState":
@@ -215,6 +287,13 @@ class AgentState:
             "rewrite_keywords": list(self.rewrite_keywords),
             "rewrite_reason": self.rewrite_reason,
             "rewrite_source": self.rewrite_source,
+            "retry_count": self.retry_count,
+            "max_retries": self.max_retries,
+            "effective_query": self.effective_query,
+            "repair_query": self.repair_query,
+            "repair_strategy": self.repair_strategy,
+            "repair_reason": self.repair_reason,
+            "repair_source": self.repair_source,
             "tool_output": serialized_tool_output,
             "answer_source": self.answer_source,
             "judge_verdict": self.judge_verdict,

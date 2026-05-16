@@ -6,11 +6,13 @@ from typing import cast
 from app.agent.answer import PolicyAgentAnswerer
 from app.agent.judge import PolicyAgentJudge
 from app.agent.planner import PolicyAgentPlanner
+from app.agent.repair import PolicyAgentRepairer
 from app.agent.rewrite import PolicyAgentRewriter
 from app.agent.nodes import (
     answer_node,
     judge_node,
     planner_node,
+    repair_node,
     retrieve_node,
     rewrite_node,
     select_node,
@@ -29,17 +31,20 @@ class PolicyAgentGraph:
     """
     第一版单 Agent 工作流编排器。
 
-    当前目标只做最小闭环：
-    - 构建初始状态
-    - 执行 route
-    - 选择 node
-    - 返回最终状态 / 最终响应
+    当前已经升级成一条更完整的主线：
+    - planner: 理解任务
+    - rewrite: 改写检索 query
+    - execute: 执行 retrieve / summarize
+    - answer: 组织最终回答
+    - judge: 判断回答是否达标
+    - repair: 如有必要，最多再重试一次
     """
 
     planner: PolicyAgentPlanner | None = None
     rewriter: PolicyAgentRewriter | None = None
     answerer: PolicyAgentAnswerer | None = None
     judge: PolicyAgentJudge | None = None
+    repairer: PolicyAgentRepairer | None = None
     retrieve_tool: RetrievePolicyTool | None = None
     summarize_tool: SummarizePolicyTool | None = None
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES
@@ -49,10 +54,11 @@ class PolicyAgentGraph:
         query: AgentQuery | str,
         *,
         top_k: int = DEFAULT_QUERY_TOP_K,
+        max_retries: int = 1,
     ) -> AgentState:
         """执行完整 Agent 工作流，并返回最终状态。"""
 
-        state = build_initial_state(query, top_k=top_k)
+        state = build_initial_state(query, top_k=top_k, max_retries=max_retries)
         planned_state = planner_node(
             state,
             planner=self.planner,
@@ -62,25 +68,30 @@ class PolicyAgentGraph:
             planned_state,
             rewriter=self.rewriter,
         )
-        executed_state = self.execute_node(rewritten_state)
-        answered_state = answer_node(
-            executed_state,
-            answerer=self.answerer,
+        first_pass_state = self.run_execution_cycle(rewritten_state)
+
+        # repair 只做一层“轻量补救”：
+        # - 不在 graph 里开复杂 while loop
+        # - 先把“能重试一次”这条主线打通
+        repaired_state = repair_node(
+            first_pass_state,
+            repairer=self.repairer,
         )
-        return judge_node(
-            answered_state,
-            judge=self.judge,
-        )
+        if repaired_state.retry_count == first_pass_state.retry_count:
+            return repaired_state
+
+        return self.run_execution_cycle(repaired_state)
 
     def run_and_get_response(
         self,
         query: AgentQuery | str,
         *,
         top_k: int = DEFAULT_QUERY_TOP_K,
+        max_retries: int = 1,
     ) -> AgentResponse:
         """执行完整 Agent 工作流，并直接返回最终响应。"""
 
-        final_state = self.run(query, top_k=top_k)
+        final_state = self.run(query, top_k=top_k, max_retries=max_retries)
         if final_state.final_response is not None:
             return final_state.final_response
 
@@ -110,26 +121,50 @@ class PolicyAgentGraph:
 
         return node(state)
 
+    def run_execution_cycle(self, state: AgentState) -> AgentState:
+        """
+        执行一轮完整的 execute -> answer -> judge。
+
+        把这一层拆成单独方法后，graph 既能跑第一次主流程，
+        也能在 repair 之后复用完全同一套逻辑再跑一遍。
+        """
+
+        executed_state = self.execute_node(state)
+        answered_state = answer_node(
+            executed_state,
+            answerer=self.answerer,
+        )
+        return judge_node(
+            answered_state,
+            judge=self.judge,
+        )
+
 
 def build_initial_state(
     query: AgentQuery | str,
     *,
     top_k: int = DEFAULT_QUERY_TOP_K,
+    max_retries: int = 1,
 ) -> AgentState:
     """构建工作流的初始状态。"""
 
     normalized_query = query if isinstance(query, AgentQuery) else AgentQuery(query, top_k=top_k)
-    return AgentState(query=normalized_query)
+    return AgentState(
+        query=normalized_query,
+        max_retries=max_retries,
+    )
 
 
 def run_agent_workflow(
     query: AgentQuery | str,
     *,
     top_k: int = DEFAULT_QUERY_TOP_K,
+    max_retries: int = 1,
     planner: PolicyAgentPlanner | None = None,
     rewriter: PolicyAgentRewriter | None = None,
     answerer: PolicyAgentAnswerer | None = None,
     judge: PolicyAgentJudge | None = None,
+    repairer: PolicyAgentRepairer | None = None,
     retrieve_tool: RetrievePolicyTool | None = None,
     summarize_tool: SummarizePolicyTool | None = None,
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES,
@@ -141,21 +176,24 @@ def run_agent_workflow(
         rewriter=rewriter,
         answerer=answerer,
         judge=judge,
+        repairer=repairer,
         retrieve_tool=retrieve_tool,
         summarize_tool=summarize_tool,
         supported_routes=cast(frozenset[str], supported_routes),
     )
-    return graph.run(query, top_k=top_k)
+    return graph.run(query, top_k=top_k, max_retries=max_retries)
 
 
 def run_agent_query(
     query: AgentQuery | str,
     *,
     top_k: int = DEFAULT_QUERY_TOP_K,
+    max_retries: int = 1,
     planner: PolicyAgentPlanner | None = None,
     rewriter: PolicyAgentRewriter | None = None,
     answerer: PolicyAgentAnswerer | None = None,
     judge: PolicyAgentJudge | None = None,
+    repairer: PolicyAgentRepairer | None = None,
     retrieve_tool: RetrievePolicyTool | None = None,
     summarize_tool: SummarizePolicyTool | None = None,
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES,
@@ -167,8 +205,9 @@ def run_agent_query(
         rewriter=rewriter,
         answerer=answerer,
         judge=judge,
+        repairer=repairer,
         retrieve_tool=retrieve_tool,
         summarize_tool=summarize_tool,
         supported_routes=cast(frozenset[str], supported_routes),
     )
-    return graph.run_and_get_response(query, top_k=top_k)
+    return graph.run_and_get_response(query, top_k=top_k, max_retries=max_retries)

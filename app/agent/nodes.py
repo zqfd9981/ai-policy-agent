@@ -5,6 +5,7 @@ from collections.abc import Callable
 from app.agent.answer import PolicyAgentAnswerer, fallback_answer
 from app.agent.judge import PolicyAgentJudge, fallback_judge
 from app.agent.planner import PolicyAgentPlanner
+from app.agent.repair import PolicyAgentRepairer, fallback_repair
 from app.agent.rewrite import PolicyAgentRewriter
 from app.agent.router import ROUTE_RETRIEVE, ROUTE_SUMMARIZE, ROUTE_UNSUPPORTED
 from app.agent.router import detect_intent_route, route_state
@@ -165,7 +166,9 @@ def retrieve_node(
     route = state.route or ROUTE_RETRIEVE
 
     try:
-        query_for_retrieval = state.rewritten_query or state.query.user_query
+        # 检索节点只认当前“生效中的查询”。
+        # 这样第一次走 rewrite，第二次走 repair 时，工具层都不用再分支判断。
+        query_for_retrieval = state.effective_query
         tool_output = active_tool.run(
             query_for_retrieval,
             top_k=state.query.top_k,
@@ -195,7 +198,8 @@ def summarize_node(
     route = state.route or ROUTE_SUMMARIZE
 
     try:
-        query_for_summary = state.rewritten_query or state.query.user_query
+        # summarize 分支和 retrieve 一样，统一消费 effective_query。
+        query_for_summary = state.effective_query
         tool_output = active_tool.run(
             query_for_summary,
             top_k=state.query.top_k,
@@ -283,6 +287,51 @@ def unsupported_node(state: AgentState) -> AgentState:
             message="当前请求类型暂未支持。",
             error_message=error_message,
         )
+    )
+
+
+def repair_node(
+    state: AgentState,
+    *,
+    repairer: PolicyAgentRepairer | None = None,
+) -> AgentState:
+    """
+    标准 repair node。
+
+    它不直接执行工具，而是只做一件事：
+    - 判断当前 judge 结果是否值得重试
+    - 如果值得，就把新的 repair_query 写回 state
+    - 如果不值得，就保持原状态不变
+    """
+
+    active_repairer = repairer
+    if active_repairer is None or not active_repairer.is_available:
+        decision = fallback_repair(state)
+        if not decision.should_retry:
+            return state
+
+        return state.with_repair_result(
+            repair_query=decision.repaired_query,
+            repair_strategy=decision.repair_strategy,
+            repair_reason=decision.repair_reason,
+            repair_source="rule",
+        )
+
+    try:
+        decision = active_repairer.repair(state)
+        repair_source = "llm"
+    except Exception:
+        decision = fallback_repair(state)
+        repair_source = "rule"
+
+    if not decision.should_retry:
+        return state
+
+    return state.with_repair_result(
+        repair_query=decision.repaired_query,
+        repair_strategy=decision.repair_strategy,
+        repair_reason=decision.repair_reason,
+        repair_source=repair_source,
     )
 
 

@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.agent.answer import extract_readable_snippet
 from app.llm.client import OpenAILLMClient
 from app.models.response import AgentResponse
 from app.tools.retrieve_policy import RetrievePolicyOutput
@@ -199,9 +200,12 @@ def judge_retrieval_answer(
 
     has_enough_text = len(final_response.message.strip()) >= 40
     has_citations = final_response.citation_count > 0
+    has_readable_support = retrieval_has_readable_support(tool_output)
     grounded = has_citations
 
-    if has_enough_text and has_citations:
+    # 当检索结果里能拿到可读片段或明确标题路径时，我们才更有底气给 pass。
+    # 否则即使“查到了东西”，也更像一次待修复的中间结果。
+    if has_enough_text and has_citations and has_readable_support:
         return JudgeDecision(
             verdict="pass",
             score=86,
@@ -212,9 +216,13 @@ def judge_retrieval_answer(
 
     return JudgeDecision(
         verdict="weak",
-        score=65,
+        score=58 if not has_readable_support else 65,
         grounded=grounded,
-        reason="回答与检索结果基本一致，但仍偏简略，信息组织还可以更充分。",
+        reason=(
+            "回答和检索结果基本一致，但当前命中的证据片段可读性偏弱，适合再做一次聚焦检索。"
+            if not has_readable_support
+            else "回答与检索结果基本一致，但仍偏简略，信息组织还可以更充分。"
+        ),
         followup="建议补充政策要点提炼，或进一步聚焦单篇政策继续分析。",
     )
 
@@ -251,3 +259,19 @@ def judge_summary_answer(
         ),
         followup="建议补充更明确的目标政策或增加摘要证据后再生成回答。",
     )
+
+
+def retrieval_has_readable_support(tool_output: RetrievePolicyOutput) -> bool:
+    """
+    判断 retrieve 结果是否包含足够“能看”的证据。
+
+    repair 是否值得触发，核心不只是“有没有命中”，
+    还要看命中的文本是不是已经能支撑一个像样回答。
+    """
+
+    for item in tool_output.results[:3]:
+        if item.title_path_str.strip():
+            return True
+        if extract_readable_snippet(item.text):
+            return True
+    return False

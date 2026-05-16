@@ -86,6 +86,16 @@ def render_state(state: AgentState) -> str:
                 "\n".join(state.alternative_queries),
             )
         )
+    lines.append(f"retry_count: {state.retry_count}/{state.max_retries}")
+    lines.append(f"effective_query: {state.effective_query}")
+    if state.repair_query:
+        lines.append(f"repair_query: {state.repair_query}")
+    if state.repair_strategy:
+        lines.append(f"repair_strategy: {state.repair_strategy}")
+    if state.repair_source:
+        lines.append(f"repair_source: {state.repair_source}")
+    if state.repair_reason:
+        lines.extend(render_labeled_block("repair_reason", state.repair_reason))
     if state.answer_source:
         lines.append(f"answer_source: {state.answer_source}")
     if state.judge_verdict:

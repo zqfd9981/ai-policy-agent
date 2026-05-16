@@ -7,6 +7,7 @@ from app.agent.graph import (
 )
 from app.agent.judge import JudgeDecision, PolicyAgentJudge
 from app.agent.planner import PlannerDecision, PolicyAgentPlanner, plan_query
+from app.agent.repair import PolicyAgentRepairer, RepairDecision
 from app.agent.rewrite import PolicyAgentRewriter, RewriteDecision, rewrite_query
 from app.agent.state import AgentState
 from app.agent.nodes import (
@@ -15,6 +16,7 @@ from app.agent.nodes import (
     fallback_rewrite_node,
     judge_node,
     planner_node,
+    repair_node,
     retrieve_node,
     rewrite_node,
     select_node,
