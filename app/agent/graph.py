@@ -19,14 +19,18 @@ from app.agent.nodes import (
     retrieve_node,
     rewrite_node,
     select_node,
+    strategy_node,
+    summarize_policies_node,
     summarize_node,
 )
+from app.agent.strategy import STRATEGY_MULTI_DOC_SUMMARY, STRATEGY_SINGLE_DOC_SUMMARY
 from app.agent.router import DEFAULT_SUPPORTED_ROUTES
 from app.agent.state import AgentState
 from app.models.query import DEFAULT_QUERY_TOP_K, AgentQuery
 from app.models.response import AgentResponse
 from app.tools.compare_policy import ComparePolicyTool
 from app.tools.retrieve_policy import RetrievePolicyTool
+from app.tools.summarize_policies import SummarizePoliciesTool
 from app.tools.summarize_policy import SummarizePolicyTool
 
 
@@ -52,6 +56,7 @@ class PolicyAgentGraph:
     next_step_planner: PolicyAgentNextStepPlanner | None = None
     retrieve_tool: RetrievePolicyTool | None = None
     summarize_tool: SummarizePolicyTool | None = None
+    summarize_policies_tool: SummarizePoliciesTool | None = None
     compare_tool: ComparePolicyTool | None = None
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES
 
@@ -159,6 +164,22 @@ class PolicyAgentGraph:
         """
 
         executed_state = self.execute_node(state)
+        if state.route == "retrieve":
+            strategized_state = strategy_node(executed_state)
+            if strategized_state.strategy == STRATEGY_SINGLE_DOC_SUMMARY:
+                executed_state = summarize_node(
+                    strategized_state,
+                    tool=self.summarize_tool,
+                )
+            elif strategized_state.strategy == STRATEGY_MULTI_DOC_SUMMARY:
+                executed_state = summarize_policies_node(
+                    strategized_state,
+                    tool=self.summarize_policies_tool,
+                )
+            elif strategized_state.route != executed_state.route:
+                executed_state = self.execute_node(strategized_state)
+            else:
+                executed_state = strategized_state
         answered_state = answer_node(
             executed_state,
             answerer=self.answerer,
@@ -197,6 +218,7 @@ def run_agent_workflow(
     next_step_planner: PolicyAgentNextStepPlanner | None = None,
     retrieve_tool: RetrievePolicyTool | None = None,
     summarize_tool: SummarizePolicyTool | None = None,
+    summarize_policies_tool: SummarizePoliciesTool | None = None,
     compare_tool: ComparePolicyTool | None = None,
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES,
 ) -> AgentState:
@@ -211,6 +233,7 @@ def run_agent_workflow(
         next_step_planner=next_step_planner,
         retrieve_tool=retrieve_tool,
         summarize_tool=summarize_tool,
+        summarize_policies_tool=summarize_policies_tool,
         compare_tool=compare_tool,
         supported_routes=cast(frozenset[str], supported_routes),
     )
@@ -230,6 +253,7 @@ def run_agent_query(
     next_step_planner: PolicyAgentNextStepPlanner | None = None,
     retrieve_tool: RetrievePolicyTool | None = None,
     summarize_tool: SummarizePolicyTool | None = None,
+    summarize_policies_tool: SummarizePoliciesTool | None = None,
     compare_tool: ComparePolicyTool | None = None,
     supported_routes: frozenset[str] = DEFAULT_SUPPORTED_ROUTES,
 ) -> AgentResponse:
@@ -244,6 +268,7 @@ def run_agent_query(
         next_step_planner=next_step_planner,
         retrieve_tool=retrieve_tool,
         summarize_tool=summarize_tool,
+        summarize_policies_tool=summarize_policies_tool,
         compare_tool=compare_tool,
         supported_routes=cast(frozenset[str], supported_routes),
     )

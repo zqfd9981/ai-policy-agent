@@ -9,6 +9,7 @@ from app.agent.state import AgentState
 from app.agent.router import ROUTE_RETRIEVE, ROUTE_SUMMARIZE
 from app.llm.client import OpenAILLMClient
 from app.tools.retrieve_policy import RetrievePolicyOutput
+from app.tools.summarize_policies import MultiPolicySummaryOutput
 from app.tools.summarize_policy import PolicySummaryOutput
 
 
@@ -138,6 +139,12 @@ def describe_repair_evidence(state: AgentState) -> str:
             f"摘要引用数为 {tool_output.citation_count}。"
         )
 
+    if isinstance(tool_output, MultiPolicySummaryOutput):
+        return (
+            f"multi_summary: 当前已汇总 {len(tool_output.policy_summaries)} 篇政策，"
+            f"总引用数为 {tool_output.citation_count}。"
+        )
+
     return "unknown: 当前没有可供修复利用的结构化证据。"
 
 
@@ -227,6 +234,8 @@ def build_summary_repair_query(state: AgentState) -> str:
     """为 summarize 分支构造一个更明确的摘要型 query。"""
 
     tool_output = state.tool_output
+    if isinstance(tool_output, MultiPolicySummaryOutput):
+        return state.query.user_query.strip()
     if isinstance(tool_output, PolicySummaryOutput):
         base_title = tool_output.title.strip()
     else:

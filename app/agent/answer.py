@@ -7,6 +7,7 @@ from typing import Any
 from app.llm.client import OpenAILLMClient
 from app.tools.compare_policy import PolicyCompareOutput, render_policy_comparison
 from app.tools.retrieve_policy import RetrievePolicyOutput
+from app.tools.summarize_policies import MultiPolicySummaryOutput, render_multi_policy_summary
 from app.tools.summarize_policy import PolicySummaryOutput, render_policy_summary
 
 
@@ -125,6 +126,20 @@ def build_answer_context(
         ]
         return "\n".join(lines), citations
 
+    if isinstance(tool_output, MultiPolicySummaryOutput):
+        citations = tuple(item.to_dict() for item in tool_output.all_citations)
+        lines = [
+            f"用户问题：{user_query}",
+            f"任务类型：{intent or 'summarize'}",
+            "",
+            f"纳入政策数：{len(tool_output.policy_summaries)}",
+            f"选择依据：{tool_output.selection_reason}",
+            "",
+            "多文档汇总草稿：",
+            render_multi_policy_summary(tool_output),
+        ]
+        return "\n".join(lines), citations
+
     if isinstance(tool_output, PolicyCompareOutput):
         citations = tuple(dict(item) for item in tool_output.all_citations)
         lines = [
@@ -173,6 +188,13 @@ def fallback_answer(
     if isinstance(tool_output, PolicySummaryOutput):
         return AnswerDraft(
             message=render_policy_summary(tool_output),
+            citations=tuple(item.to_dict() for item in tool_output.all_citations),
+            source="rule",
+        )
+
+    if isinstance(tool_output, MultiPolicySummaryOutput):
+        return AnswerDraft(
+            message=render_multi_policy_summary(tool_output),
             citations=tuple(item.to_dict() for item in tool_output.all_citations),
             source="rule",
         )

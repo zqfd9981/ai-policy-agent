@@ -10,6 +10,7 @@ from app.llm.client import OpenAILLMClient
 from app.models.response import AgentResponse
 from app.tools.compare_policy import PolicyCompareOutput
 from app.tools.retrieve_policy import RetrievePolicyOutput
+from app.tools.summarize_policies import MultiPolicySummaryOutput
 from app.tools.summarize_policy import PolicySummaryOutput
 
 
@@ -127,6 +128,12 @@ def describe_next_step_evidence(state: AgentState) -> str:
         return (
             f"summarize: 当前已定位政策 {tool_output.title} ({tool_output.doc_id})，"
             f"摘要证据数为 {tool_output.citation_count}。"
+        )
+
+    if isinstance(tool_output, MultiPolicySummaryOutput):
+        return (
+            f"multi_summary: 当前已汇总 {len(tool_output.policy_summaries)} 篇政策，"
+            f"总引用数为 {tool_output.citation_count}。"
         )
 
     if isinstance(tool_output, PolicyCompareOutput):
@@ -292,6 +299,11 @@ def build_followup_questions(state: AgentState) -> tuple[str, ...]:
         )
 
     if state.route == ROUTE_SUMMARIZE:
+        if isinstance(state.tool_output, MultiPolicySummaryOutput):
+            return (
+                "你可以指定其中某一篇政策继续做单篇摘要，我会进一步下钻。",
+                "你也可以补充更关心的维度，例如支持重点、适用对象、申报条件或地区差异。",
+            )
         return (
             "你可以指定最关心的摘要分区，例如支持重点、适用对象或申报条件。",
             "如果你已经有目标政策标题，也可以直接告诉我，我会围绕那一篇继续展开。",

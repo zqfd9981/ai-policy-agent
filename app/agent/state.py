@@ -42,6 +42,9 @@ class AgentState:
     rewrite_keywords: tuple[str, ...] = ()
     rewrite_reason: str | None = None
     rewrite_source: str | None = None
+    strategy: str | None = None
+    strategy_reason: str | None = None
+    retrieval_output: Any | None = None
     retry_count: int = 0
     max_retries: int = 1
     repair_query: str | None = None
@@ -86,6 +89,8 @@ class AgentState:
         )
         normalized_rewrite_reason = self.rewrite_reason.strip() if self.rewrite_reason else None
         normalized_rewrite_source = self.rewrite_source.strip().lower() if self.rewrite_source else None
+        normalized_strategy = self.strategy.strip().lower() if self.strategy else None
+        normalized_strategy_reason = self.strategy_reason.strip() if self.strategy_reason else None
         normalized_retry_count = max(0, int(self.retry_count))
         normalized_max_retries = max(0, int(self.max_retries))
         normalized_repair_query = self.repair_query.strip() if self.repair_query else None
@@ -135,6 +140,9 @@ class AgentState:
         object.__setattr__(self, "rewrite_keywords", normalized_rewrite_keywords)
         object.__setattr__(self, "rewrite_reason", normalized_rewrite_reason)
         object.__setattr__(self, "rewrite_source", normalized_rewrite_source)
+        object.__setattr__(self, "strategy", normalized_strategy)
+        object.__setattr__(self, "strategy_reason", normalized_strategy_reason)
+        object.__setattr__(self, "retrieval_output", self.retrieval_output)
         object.__setattr__(self, "retry_count", normalized_retry_count)
         object.__setattr__(self, "max_retries", normalized_max_retries)
         object.__setattr__(self, "repair_query", normalized_repair_query)
@@ -236,6 +244,29 @@ class AgentState:
         """返回带有工具输出的新状态。"""
 
         return replace(self, tool_output=tool_output)
+
+    def with_retrieval_output(self, retrieval_output: Any) -> "AgentState":
+        """Preserve the raw retrieval output for post-retrieval strategy branches."""
+
+        return replace(self, retrieval_output=retrieval_output, tool_output=retrieval_output)
+
+    def with_strategy_result(
+        self,
+        *,
+        strategy: str,
+        route: str,
+        strategy_reason: str,
+        rewritten_query: str | None = None,
+    ) -> "AgentState":
+        """返回带有后置策略选择结果的新状态。"""
+
+        return replace(
+            self,
+            strategy=strategy,
+            route=route,
+            strategy_reason=strategy_reason,
+            rewritten_query=rewritten_query or self.rewritten_query,
+        )
 
     def with_rewrite_result(
         self,
@@ -412,6 +443,13 @@ class AgentState:
             "rewrite_keywords": list(self.rewrite_keywords),
             "rewrite_reason": self.rewrite_reason,
             "rewrite_source": self.rewrite_source,
+            "strategy": self.strategy,
+            "strategy_reason": self.strategy_reason,
+            "retrieval_output": (
+                self.retrieval_output.to_dict()
+                if hasattr(self.retrieval_output, "to_dict")
+                else self.retrieval_output
+            ),
             "retry_count": self.retry_count,
             "max_retries": self.max_retries,
             "effective_query": self.effective_query,

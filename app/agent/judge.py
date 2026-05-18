@@ -10,6 +10,7 @@ from app.llm.client import OpenAILLMClient
 from app.models.response import AgentResponse
 from app.tools.compare_policy import PolicyCompareOutput
 from app.tools.retrieve_policy import RetrievePolicyOutput
+from app.tools.summarize_policies import MultiPolicySummaryOutput
 from app.tools.summarize_policy import PolicySummaryOutput
 
 
@@ -149,6 +150,12 @@ def describe_tool_output(tool_output: Any) -> str:
             f"共抽取 {tool_output.citation_count} 条摘要证据。"
         )
 
+    if isinstance(tool_output, MultiPolicySummaryOutput):
+        return (
+            f"multi_summary: 宸叉眹鎬?{len(tool_output.policy_summaries)} 绡囨斂绛栵紝"
+            f"鎬诲紩鐢ㄦ暟涓?{tool_output.citation_count}銆?"
+        )
+
     if isinstance(tool_output, PolicyCompareOutput):
         return (
             f"compare: 正在对比 {tool_output.left_summary.title} "
@@ -180,6 +187,9 @@ def fallback_judge(
 
     if isinstance(tool_output, PolicySummaryOutput):
         return judge_summary_answer(tool_output, final_response)
+
+    if isinstance(tool_output, MultiPolicySummaryOutput):
+        return judge_multi_policy_summary_answer(tool_output, final_response)
 
     if isinstance(tool_output, PolicyCompareOutput):
         return judge_compare_answer(tool_output, final_response)
@@ -298,6 +308,34 @@ def summary_has_readable_support(tool_output: PolicySummaryOutput) -> bool:
         if extract_readable_snippet(item.text):
             return True
     return False
+
+
+def judge_multi_policy_summary_answer(
+    tool_output: MultiPolicySummaryOutput,
+    final_response: AgentResponse,
+) -> JudgeDecision:
+    """Rule-based evaluation for multi-policy summary answers."""
+
+    has_citations = final_response.citation_count > 0
+    has_multiple_policies = len(tool_output.policy_summaries) >= 2
+    has_structure = any(section.label in final_response.message for section in tool_output.sections[:2])
+
+    if has_citations and has_multiple_policies and has_structure:
+        return JudgeDecision(
+            verdict="pass",
+            score=88,
+            grounded=True,
+            reason="回答已经形成多政策汇总结构，并保留了跨文档证据支撑。",
+            followup="如果用户继续追问，可进一步下钻到单篇政策摘要或做地区间比较。",
+        )
+
+    return JudgeDecision(
+        verdict="weak",
+        score=64 if has_citations else 50,
+        grounded=has_citations,
+        reason="回答已进入多文档汇总模式，但覆盖完整性或结构化程度仍可继续加强。",
+        followup="建议补充更明确的地区、主题或时间范围后继续汇总。",
+    )
 
 
 def judge_compare_answer(

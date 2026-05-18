@@ -13,11 +13,13 @@ from app.agent.planner import PolicyAgentPlanner
 from app.agent.repair import PolicyAgentRepairer, fallback_repair
 from app.agent.rewrite import PolicyAgentRewriter
 from app.agent.router import ROUTE_COMPARE, ROUTE_RETRIEVE, ROUTE_SUMMARIZE, ROUTE_UNSUPPORTED
-from app.agent.router import detect_intent_route, route_state
+from app.agent.router import detect_intent_route
+from app.agent.strategy import choose_retrieval_strategy
 from app.agent.state import AgentState
 from app.models.response import AgentResponse
 from app.tools.compare_policy import ComparePolicyTool
-from app.tools.retrieve_policy import RetrievePolicyTool
+from app.tools.retrieve_policy import RetrievePolicyTool, RetrievePolicyOutput
+from app.tools.summarize_policies import SummarizePoliciesTool
 from app.tools.summarize_policy import (
     SummarizePolicyTool,
 )
@@ -56,7 +58,10 @@ def planner_node(
             supported_routes=supported_routes,
         )
 
-    route = decision.intent if decision.intent in supported_routes else ROUTE_UNSUPPORTED
+    route = initial_route_for_intent(
+        decision.intent,
+        needs_rag=decision.needs_rag,
+    )
     return state.with_planner_result(
         intent=decision.intent,
         route=route,
@@ -80,11 +85,13 @@ def fallback_planner_node(
     一样的字段形状，避免后面 rewrite / answer 节点区分两套输入。
     """
 
-    routed_state = route_state(
-        state,
-        supported_routes=supported_routes,
-    )
     detected_intent = detect_intent_route(state.query)
+    routed_state = state.with_route(
+        initial_route_for_intent(
+            detected_intent,
+            needs_rag=detected_intent != "chat",
+        )
+    )
 
     answer_style = "direct"
     if detected_intent == ROUTE_SUMMARIZE:
@@ -156,6 +163,15 @@ def fallback_rewrite_node(state: AgentState) -> AgentState:
     )
 
 
+def initial_route_for_intent(intent: str | None, *, needs_rag: bool) -> str:
+    """Map user intent to the first executable route in the graph."""
+
+    normalized_intent = intent.strip().lower() if intent else ""
+    if needs_rag and normalized_intent in {ROUTE_RETRIEVE, ROUTE_SUMMARIZE, ROUTE_COMPARE}:
+        return ROUTE_RETRIEVE
+    return ROUTE_UNSUPPORTED
+
+
 def retrieve_node(
     state: AgentState,
     *,
@@ -192,7 +208,30 @@ def retrieve_node(
             )
         )
 
-    return state.with_tool_output(tool_output)
+    return state.with_retrieval_output(tool_output)
+
+
+def strategy_node(state: AgentState) -> AgentState:
+    """
+    Select the post-retrieval execution strategy.
+    The agent now retrieves first, then decides whether to answer directly,
+    switch to single-document summary, or continue into compare.
+    """
+
+    if not isinstance(state.tool_output, RetrievePolicyOutput):
+        return state
+
+    decision = choose_retrieval_strategy(
+        intent=state.intent,
+        user_query=state.query.user_query,
+        retrieval_output=state.tool_output,
+    )
+    return state.with_strategy_result(
+        strategy=decision.strategy,
+        route=decision.route,
+        strategy_reason=decision.reason,
+        rewritten_query=decision.query or state.rewritten_query,
+    )
 
 
 def summarize_node(
@@ -219,6 +258,36 @@ def summarize_node(
                 success=False,
                 route=route,
                 message="政策摘要执行失败。",
+                error_message=error_message,
+            )
+        )
+
+    return state.with_tool_output(tool_output)
+
+
+def summarize_policies_node(
+    state: AgentState,
+    *,
+    tool: SummarizePoliciesTool | None = None,
+) -> AgentState:
+    """Execute multi-document summary after retrieval aggregation."""
+
+    active_tool = tool or SummarizePoliciesTool()
+    route = state.route or ROUTE_SUMMARIZE
+
+    try:
+        tool_output = active_tool.run(
+            state.effective_query,
+            retrieval_output=state.retrieval_output if isinstance(state.retrieval_output, RetrievePolicyOutput) else None,
+            top_k=max(3, state.query.top_k),
+        )
+    except Exception as error:
+        error_message = f"执行多文档摘要节点失败: {error}"
+        return state.with_error(error_message).with_final_response(
+            AgentResponse(
+                success=False,
+                route=route,
+                message="政策汇总执行失败。",
                 error_message=error_message,
             )
         )
