@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 
 from pydantic import BaseModel, Field
 
@@ -81,6 +82,7 @@ class PolicyAgentPlanner:
             system_prompt=PLANNER_SYSTEM_PROMPT,
             user_prompt=f"用户问题：{normalized_query}",
             response_model=PlannerDecisionModel,
+            model=os.getenv("PLANNER_MODEL"),
         )
         return PlannerDecision(
             intent=parsed.intent.strip().lower(),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -75,6 +76,7 @@ class PolicyAgentAnswerer:
         message = self.client.generate_text(
             system_prompt=ANSWER_SYSTEM_PROMPT,
             user_prompt=user_prompt,
+            model=os.getenv("ANSWER_MODEL"),
         )
         return AnswerDraft(
             message=message,

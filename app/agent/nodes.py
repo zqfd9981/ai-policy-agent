@@ -43,8 +43,8 @@ def planner_node(
     - 无论来源如何，都把统一形状的规划结果写回 state
     """
 
-    active_planner = planner
-    if active_planner is None or not active_planner.is_available:
+    active_planner = planner or PolicyAgentPlanner()
+    if not active_planner.is_available:
         return fallback_planner_node(
             state,
             supported_routes=supported_routes,
@@ -131,8 +131,8 @@ def rewrite_node(
             rewrite_source="skip",
         )
 
-    active_rewriter = rewriter
-    if active_rewriter is None or not active_rewriter.is_available:
+    active_rewriter = rewriter or PolicyAgentRewriter()
+    if not active_rewriter.is_available:
         return fallback_rewrite_node(state)
 
     try:
@@ -356,8 +356,8 @@ def answer_node(
             )
         )
 
-    active_answerer = answerer
-    if active_answerer is None or not active_answerer.is_available:
+    active_answerer = answerer or PolicyAgentAnswerer()
+    if not active_answerer.is_available:
         draft = fallback_answer(tool_output=state.tool_output)
         return state.with_answer_source(draft.source).with_final_response(
             AgentResponse(
@@ -418,8 +418,8 @@ def repair_node(
     - 如果不值得，就保持原状态不变
     """
 
-    active_repairer = repairer
-    if active_repairer is None or not active_repairer.is_available:
+    active_repairer = repairer or PolicyAgentRepairer()
+    if not active_repairer.is_available:
         decision = fallback_repair(state)
         if not decision.should_retry:
             return state
@@ -467,8 +467,8 @@ def judge_node(
         error_message = "judge node 缺少可评估的 final_response。"
         return state.with_error(error_message)
 
-    active_judge = judge
-    if active_judge is None or not active_judge.is_available:
+    active_judge = judge or PolicyAgentJudge()
+    if not active_judge.is_available:
         decision = fallback_judge(
             tool_output=state.tool_output,
             final_response=state.final_response,
@@ -523,8 +523,8 @@ def next_step_node(
         error_message = "next_step node 缺少可处理的 final_response。"
         return state.with_error(error_message)
 
-    active_planner = planner
-    if active_planner is None or not active_planner.is_available:
+    active_planner = planner or PolicyAgentNextStepPlanner()
+    if not active_planner.is_available:
         decision = fallback_next_step(state)
         planner_source = "rule"
     else:

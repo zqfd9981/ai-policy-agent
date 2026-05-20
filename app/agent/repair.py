@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+import os
 
 from pydantic import BaseModel, Field
 
@@ -80,6 +81,7 @@ class PolicyAgentRepairer:
             system_prompt=REPAIR_SYSTEM_PROMPT,
             user_prompt=context_text,
             response_model=RepairDecisionModel,
+            model=os.getenv("REPAIR_MODEL"),
         )
         return RepairDecision(
             should_retry=bool(parsed.should_retry),

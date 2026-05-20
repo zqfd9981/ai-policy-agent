@@ -1,48 +1,58 @@
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TypeVar
 
 from openai import OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+from dotenv import load_dotenv
 
 
-DEFAULT_LLM_MODEL = "gpt-4.1-mini"
+DEFAULT_LLM_MODEL = "gpt-4o"
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel)
 
 
 class LLMClientUnavailableError(RuntimeError):
-    """当前环境无法使用 LLM client 时抛出的异常。"""
+    """Raised when the configured LLM client is unavailable."""
 
 
 @dataclass(slots=True)
 class OpenAILLMClient:
     """
-    对 OpenAI 调用做一层很薄的统一封装。
-
-    当前先只支持 planner 需要的“结构化解析”能力，
-    后面再把 answer / judge 等节点都收敛到这一层。
+    OpenAI-compatible client wrapper.
+    Designed to work with both official OpenAI endpoints and compatible providers
+    such as YUNWU.
     """
 
     model: str = DEFAULT_LLM_MODEL
     api_key: str | None = None
+    base_url: str | None = None
+    _client: OpenAI | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.api_key is None:
-            self.api_key = os.getenv("OPENAI_API_KEY")
+        load_dotenv()
 
-        env_model = os.getenv("OPENAI_PLANNER_MODEL") or os.getenv("OPENAI_MODEL")
+        if self.api_key is None:
+            self.api_key = os.getenv("OPENAI_API_KEY") or os.getenv("YUNWU_API_KEY")
+
+        if self.base_url is None:
+            self.base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("YUNWU_BASE_URL")
+            if not self.base_url and os.getenv("YUNWU_API_KEY"):
+                self.base_url = "https://yunwu.ai/v1"
+
+        env_model = (
+            os.getenv("OPENAI_MODEL")
+            or os.getenv("LLM_MODEL_NAME")
+            or os.getenv("OPENAI_PLANNER_MODEL")
+        )
         if env_model:
             self.model = env_model.strip()
 
-        self._client: OpenAI | None = None
-
     @property
     def is_available(self) -> bool:
-        """判断当前环境是否具备可用的 API Key。"""
-
         return bool(self.api_key)
 
     def parse_structured_response(
@@ -52,34 +62,35 @@ class OpenAILLMClient:
         user_prompt: str,
         response_model: type[ResponseModelT],
         temperature: float = 0.1,
+        model: str | None = None,
     ) -> ResponseModelT:
         """
-        请求模型并直接解析为结构化对象。
-
-        这里优先使用 SDK 的 parse 能力，避免我们手写 JSON 提取逻辑。
+        Ask a model to return JSON text, then validate it with Pydantic.
+        This is more compatible with third-party OpenAI-compatible providers
+        than relying on SDK-specific parse helpers.
         """
 
-        if not self.is_available:
-            raise LLMClientUnavailableError("未配置 OPENAI_API_KEY，无法使用 LLM planner。")
-
-        if self._client is None:
-            self._client = OpenAI(api_key=self.api_key)
-
-        completion = self._client.beta.chat.completions.parse(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format=response_model,
+        content = self.generate_text(
+            system_prompt=system_prompt,
+            user_prompt=(
+                f"{user_prompt}\n\n"
+                "请只返回一个合法 JSON 对象，不要输出 Markdown，不要输出解释。"
+            ),
             temperature=temperature,
+            max_completion_tokens=1200,
+            model=model,
         )
 
-        parsed = completion.choices[0].message.parsed
-        if parsed is None:
-            raise LLMClientUnavailableError("LLM 未返回可解析的结构化结果。")
+        json_text = extract_json_object(content)
+        try:
+            payload = json.loads(json_text)
+        except json.JSONDecodeError as error:
+            raise LLMClientUnavailableError(f"LLM 未返回可解析 JSON：{error}") from error
 
-        return parsed
+        try:
+            return response_model.model_validate(payload)
+        except ValidationError as error:
+            raise LLMClientUnavailableError(f"LLM JSON 结构不符合预期：{error}") from error
 
     def generate_text(
         self,
@@ -88,26 +99,44 @@ class OpenAILLMClient:
         user_prompt: str,
         temperature: float = 0.2,
         max_completion_tokens: int = 1200,
+        model: str | None = None,
     ) -> str:
-        """请求模型生成普通文本输出。"""
-
         if not self.is_available:
-            raise LLMClientUnavailableError("未配置 OPENAI_API_KEY，无法使用 LLM answer。")
+            raise LLMClientUnavailableError("未配置可用 API Key。")
 
         if self._client is None:
-            self._client = OpenAI(api_key=self.api_key)
+            client_kwargs = {"api_key": self.api_key}
+            if self.base_url:
+                client_kwargs["base_url"] = self.base_url
+            self._client = OpenAI(**client_kwargs)
 
         completion = self._client.chat.completions.create(
-            model=self.model,
+            model=(model or self.model),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=temperature,
             max_completion_tokens=max_completion_tokens,
+            timeout=30.0,
         )
         message = completion.choices[0].message.content or ""
         normalized_message = message.strip()
         if not normalized_message:
             raise LLMClientUnavailableError("LLM 未返回有效文本结果。")
         return normalized_message
+
+
+def extract_json_object(text: str) -> str:
+    """Extract the outermost JSON object from model output."""
+
+    stripped = text.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        return stripped
+
+    start_index = stripped.find("{")
+    end_index = stripped.rfind("}")
+    if start_index < 0 or end_index < 0 or end_index <= start_index:
+        raise LLMClientUnavailableError("未在模型输出中找到 JSON 对象。")
+
+    return stripped[start_index : end_index + 1]

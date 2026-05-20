@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 
 from pydantic import BaseModel, Field
 
@@ -84,6 +85,7 @@ class PolicyAgentRewriter:
             system_prompt=REWRITE_SYSTEM_PROMPT,
             user_prompt="\n".join(prompt_parts),
             response_model=RewriteDecisionModel,
+            model=os.getenv("REWRITE_MODEL"),
         )
 
         alternative_queries = tuple(

@@ -761,6 +761,8 @@ def passes_section_gate(text: str, *, title_path_str: str, section: str) -> bool
     if section == "overview":
         if any(keyword in normalized_title_path for keyword in OVERVIEW_TITLE_KEYWORDS):
             return True
+        if normalized_title_path:
+            return False
         return any(keyword in text for keyword in ("为贯彻落实", "为深入贯彻", "推动", "加快", "打造", "建设"))
 
     if section == "support_points":

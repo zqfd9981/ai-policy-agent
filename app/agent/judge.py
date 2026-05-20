@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -94,6 +95,7 @@ class PolicyAgentJudge:
             system_prompt=JUDGE_SYSTEM_PROMPT,
             user_prompt=context_text,
             response_model=JudgeDecisionModel,
+            model=os.getenv("JUDGE_MODEL"),
         )
         return JudgeDecision(
             verdict=parsed.verdict.strip().lower(),

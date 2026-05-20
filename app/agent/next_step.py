@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 
 from pydantic import BaseModel, Field
 
@@ -80,6 +81,7 @@ class PolicyAgentNextStepPlanner:
             system_prompt=NEXT_STEP_SYSTEM_PROMPT,
             user_prompt=build_next_step_context(state),
             response_model=NextStepDecisionModel,
+            model=os.getenv("NEXT_STEP_MODEL"),
         )
         return NextStepDecision(
             action=parsed.action.strip().lower(),
