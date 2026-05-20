@@ -58,6 +58,32 @@ TEMPLATE_NOISE_KEYWORDS = (
     "填写",
 )
 
+SECTION_NEGATIVE_KEYWORDS = {
+    "overview": ("申报", "补贴", "奖励", "模型券", "算力券", "语料券"),
+    "support_points": ("通知如下", "制定本措施", "总体目标", "工作目标"),
+    "target_audiences": ("支持力度", "补贴", "奖励", "申报流程"),
+    "application_conditions": ("总体目标", "工作目标", "支持力度", "人才奖励"),
+}
+
+OCR_NOISE_MARKERS = ("/g", "北京市人民政府公报", "上 海 市", "文件", "通知如下")
+
+SECTION_STRICT_TITLE_PATH = {"overview", "target_audiences", "application_conditions"}
+
+OVERVIEW_TITLE_KEYWORDS = ("工作目标", "总体目标", "总体要求", "发展思路", "政策概览", "主要目标")
+TARGET_AUDIENCE_TITLE_KEYWORDS = ("主体", "对象", "适用", "申报主体", "支持对象")
+APPLICATION_CONDITION_TITLE_KEYWORDS = ("申报", "条件", "要求", "资格", "流程")
+
+SUPPORT_POINT_NEGATIVE_PHRASES = (
+    "为贯彻落实",
+    "现印发给你们",
+    "制定本措施",
+    "通知如下",
+    "请认真贯彻执行",
+)
+TARGET_AUDIENCE_TEXT_KEYWORDS = ("企业", "机构", "单位", "主体", "高校", "医院", "园区", "适用")
+APPLICATION_CONDITION_TEXT_KEYWORDS = ("申报", "符合条件", "资格", "流程", "要求", "标准")
+OVERVIEW_TEXT_KEYWORDS = ("实施", "推动", "加快", "围绕", "目标", "打造", "建设")
+
 
 @dataclass(frozen=True, slots=True)
 class SummaryEvidence:
@@ -315,6 +341,8 @@ def extract_section_evidence(
             continue
 
         title_path_str = str(payload.get("title_path_str", ""))
+        if section in SECTION_STRICT_TITLE_PATH and not title_path_str.strip():
+            continue
         text = str(payload.get("text", ""))
         units = extract_text_units(text)
 
@@ -323,6 +351,12 @@ def extract_section_evidence(
             if len(normalized_unit) < 8:
                 continue
             if is_noise_unit(normalized_unit):
+                continue
+            if not passes_section_gate(
+                normalized_unit,
+                title_path_str=title_path_str,
+                section=section,
+            ):
                 continue
 
             score = score_summary_unit(
@@ -375,10 +409,25 @@ def extract_fallback_overview(
     for payload in payloads:
         if is_noise_payload(payload):
             continue
+        title_path_str = str(payload.get("title_path_str", ""))
+        if title_path_str.strip():
+            continue
+
         units = extract_text_units(str(payload.get("text", "")))
         if not units:
             continue
-        first_unit = next((unit for unit in units if not is_noise_unit(unit)), None)
+        first_unit = next(
+            (
+                unit
+                for unit in units
+                if not is_noise_unit(unit)
+                and any(keyword in unit for keyword in OVERVIEW_TEXT_KEYWORDS)
+                and "通知" not in unit
+                and "印发" not in unit
+                and len(unit) <= 120
+            ),
+            None,
+        )
         if first_unit is None:
             continue
 
@@ -522,6 +571,8 @@ def extract_text_units(text: str) -> list[str]:
     if not normalized_text:
         return []
 
+    normalized_text = trim_policy_preamble(normalized_text)
+
     merged_lines = merge_wrapped_lines(normalized_text)
     units: list[str] = []
     for line in merged_lines:
@@ -577,6 +628,17 @@ def merge_wrapped_lines(text: str) -> list[str]:
     return merged_lines
 
 
+def trim_policy_preamble(text: str) -> str:
+    """Trim file headers and keep the readable policy introduction."""
+
+    intro_markers = ("为贯彻落实", "为深入贯彻", "围绕", "为加快")
+    for marker in intro_markers:
+        marker_index = text.find(marker)
+        if marker_index >= 0:
+            return text[marker_index:]
+    return text
+
+
 def score_summary_unit(
     text: str,
     *,
@@ -587,16 +649,29 @@ def score_summary_unit(
     """根据标题路径和正文命中情况给摘要单元打分。"""
 
     score = 0
+    normalized_title_path = title_path_str.lower()
+
+    if is_bad_fit_for_section(text, title_path_str=title_path_str, section=section):
+        return -1
+
+    if section in SECTION_STRICT_TITLE_PATH and not title_path_str.strip():
+        return -1
+
     for keyword in keywords:
         if keyword in title_path_str:
-            score += 3
+            score += 4
         if keyword in text:
-            score += 2
+            score += 1
+
+    if normalized_title_path:
+        score += 1
 
     if section == "overview" and any(
         keyword in title_path_str for keyword in ("工作目标", "总体目标", "总体要求", "发展思路")
     ):
         score += 6
+    elif section == "overview":
+        score -= 2
 
     if section == "support_points" and any(
         keyword in title_path_str for keyword in ("配套支持", "征集范围", "重点任务", "支持")
@@ -607,11 +682,15 @@ def score_summary_unit(
         keyword in title_path_str for keyword in ("主体", "对象", "申报主体")
     ):
         score += 5
+    elif section == "target_audiences":
+        score -= 2
 
     if section == "application_conditions" and any(
         keyword in title_path_str for keyword in ("申报", "要求", "条件", "流程")
     ):
         score += 5
+    elif section == "application_conditions":
+        score -= 2
 
     if any(marker in text for marker in ("□", "支持", "推进", "鼓励", "加快", "建设")):
         score += 1
@@ -638,6 +717,9 @@ def is_noise_payload(payload: dict[str, Any]) -> bool:
     if "基本信息" in title_path_str and noise_hits >= 1:
         return True
 
+    if looks_like_ocr_noise(text):
+        return True
+
     return False
 
 
@@ -652,6 +734,67 @@ def is_noise_unit(text: str) -> bool:
         return True
 
     if len(normalized_text) <= 12 and any(keyword in normalized_text for keyword in ("签字", "公章", "电话")):
+        return True
+
+    if looks_like_ocr_noise(normalized_text):
+        return True
+
+    if len(normalized_text) > 180 and "通知" in normalized_text and "印发" in normalized_text:
+        return True
+
+    return False
+
+
+def is_bad_fit_for_section(text: str, *, title_path_str: str, section: str) -> bool:
+    """Filter obvious section mismatches before scoring."""
+
+    section_negative_keywords = SECTION_NEGATIVE_KEYWORDS.get(section, ())
+    combined_text = f"{title_path_str} {text}".lower()
+    return any(keyword.lower() in combined_text for keyword in section_negative_keywords)
+
+
+def passes_section_gate(text: str, *, title_path_str: str, section: str) -> bool:
+    """Apply section-specific inclusion gates before scoring."""
+
+    normalized_title_path = title_path_str.strip()
+
+    if section == "overview":
+        if any(keyword in normalized_title_path for keyword in OVERVIEW_TITLE_KEYWORDS):
+            return True
+        return any(keyword in text for keyword in ("为贯彻落实", "为深入贯彻", "推动", "加快", "打造", "建设"))
+
+    if section == "support_points":
+        if any(marker in text for marker in SUPPORT_POINT_NEGATIVE_PHRASES):
+            return False
+        return bool(normalized_title_path) or any(keyword in text for keyword in ("支持", "推进", "鼓励", "建设", "补贴", "奖励"))
+
+    if section == "target_audiences":
+        if any(keyword in normalized_title_path for keyword in TARGET_AUDIENCE_TITLE_KEYWORDS):
+            return any(keyword in text for keyword in TARGET_AUDIENCE_TEXT_KEYWORDS)
+        return any(keyword in text for keyword in ("申报主体为", "面向", "适用于"))
+
+    if section == "application_conditions":
+        if any(keyword in normalized_title_path for keyword in APPLICATION_CONDITION_TITLE_KEYWORDS):
+            return any(keyword in text for keyword in APPLICATION_CONDITION_TEXT_KEYWORDS)
+        return any(keyword in text for keyword in ("符合条件", "申报主体应", "申报流程", "遴选", "评审"))
+
+    return True
+
+
+def looks_like_ocr_noise(text: str) -> bool:
+    """Detect heavily garbled OCR or header boilerplate text."""
+
+    normalized_text = text.lower()
+    if any(marker in normalized_text for marker in OCR_NOISE_MARKERS):
+        return True
+
+    alpha_count = sum(char.isalpha() for char in normalized_text)
+    cjk_count = sum("\u4e00" <= char <= "\u9fff" for char in normalized_text)
+    if alpha_count >= 20 and cjk_count <= 5:
+        return True
+
+    slash_g_count = normalized_text.count("/g")
+    if slash_g_count >= 3:
         return True
 
     return False

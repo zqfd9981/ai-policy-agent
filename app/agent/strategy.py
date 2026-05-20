@@ -105,6 +105,17 @@ def choose_retrieval_strategy(
         )
 
     if normalized_intent == ROUTE_SUMMARIZE:
+        if should_use_multi_doc_summary(
+            user_query=user_query,
+            candidates=candidates,
+        ):
+            return StrategyDecision(
+                strategy=STRATEGY_MULTI_DOC_SUMMARY,
+                route=ROUTE_SUMMARIZE,
+                query=user_query.strip(),
+                reason="摘要请求更像地区或主题范围汇总，优先走多文档摘要。",
+            )
+
         top_candidate = candidates[0] if candidates else None
         if top_candidate is not None and should_use_single_doc_summary(
             user_query=user_query,
@@ -163,6 +174,33 @@ def should_use_single_doc_summary(
     return False
 
 
+def should_use_multi_doc_summary(
+    *,
+    user_query: str,
+    candidates: tuple[RetrievalDocumentCandidate, ...],
+) -> bool:
+    """Heuristics for region/topic/time-range summary requests."""
+
+    if len(candidates) < 2:
+        return False
+
+    normalized_query = user_query.strip()
+    if not normalized_query:
+        return False
+
+    if any(marker in normalized_query for marker in TIME_RANGE_KEYWORDS):
+        return True
+
+    mentioned_regions = [region for region in SUMMARY_REGION_KEYWORDS if region in normalized_query]
+    if mentioned_regions and not any(_normalized_contains(normalized_query, item.title) for item in candidates[:2]):
+        return True
+
+    if any(marker in normalized_query for marker in RANGE_SUMMARY_KEYWORDS):
+        return True
+
+    return False
+
+
 def build_single_doc_summary_query(title: str) -> str:
     """Build a structured summary query around one policy title."""
 
@@ -192,3 +230,30 @@ def _normalized_contains(base_text: str, candidate_text: str) -> bool:
 
 def _normalize_for_match(text: str) -> str:
     return re.sub(r"[\s\W_]+", "", text).lower()
+
+
+RANGE_SUMMARY_KEYWORDS = (
+    "有哪些",
+    "整体",
+    "总体",
+    "汇总",
+    "梳理",
+    "政策",
+)
+
+TIME_RANGE_KEYWORDS = (
+    "近两年",
+    "近三年",
+    "最近",
+    "近年",
+)
+
+SUMMARY_REGION_KEYWORDS = (
+    "上海",
+    "北京",
+    "江苏",
+    "浙江",
+    "深圳",
+    "广东",
+    "长三角",
+)
