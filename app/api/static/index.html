@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Policy Agent Demo</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --card: #ffffff;
+      --line: #d9dde3;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --accent: #0f766e;
+      --accent-2: #0b5f58;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #eef6f5 0%, var(--bg) 100%);
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+    }
+    .sub {
+      margin: 0 0 24px;
+      color: var(--muted);
+    }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+      margin-bottom: 20px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 120px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+      font-size: 16px;
+      line-height: 1.6;
+      outline: none;
+    }
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+    }
+    .controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+    label {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    input[type="number"] {
+      width: 80px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 14px;
+    }
+    button {
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 12px;
+      padding: 10px 18px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    button:hover { background: var(--accent-2); }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+    .status {
+      color: var(--muted);
+      font-size: 14px;
+      margin-top: 12px;
+      min-height: 20px;
+    }
+    .answer {
+      white-space: pre-wrap;
+      line-height: 1.8;
+      font-size: 15px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .kv {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fafbfc;
+    }
+    .kv .k {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .kv .v {
+      font-size: 14px;
+      font-weight: 600;
+      word-break: break-word;
+    }
+    details {
+      border-top: 1px solid var(--line);
+      padding-top: 16px;
+      margin-top: 16px;
+    }
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+    }
+    pre {
+      margin: 12px 0 0;
+      background: #0f172a;
+      color: #d1fae5;
+      padding: 16px;
+      border-radius: 14px;
+      overflow: auto;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    ul {
+      margin: 12px 0 0;
+      padding-left: 18px;
+    }
+    li {
+      margin-bottom: 10px;
+      line-height: 1.6;
+    }
+    .empty {
+      color: var(--muted);
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Policy Agent Demo</h1>
+    <p class="sub">输入问题，快速验证检索、摘要、汇总、对比链路，并查看调试状态。</p>
+
+    <section class="panel">
+      <textarea id="query" placeholder="例如：总结一下上海的AI政策"></textarea>
+      <div class="controls">
+        <label>Top K
+          <input id="topK" type="number" min="1" max="20" value="5">
+        </label>
+        <button id="askBtn">开始分析</button>
+      </div>
+      <div id="status" class="status"></div>
+    </section>
+
+    <section class="panel">
+      <h2>回答</h2>
+      <div id="answer" class="answer empty">这里会显示最终回答。</div>
+    </section>
+
+    <section class="panel">
+      <h2>运行状态</h2>
+      <div id="stateGrid" class="grid"></div>
+    </section>
+
+    <section class="panel">
+      <h2>引用</h2>
+      <ul id="citations"></ul>
+      <div id="emptyCitations" class="empty">这里会显示引用证据。</div>
+    </section>
+
+    <section class="panel">
+      <h2>调试信息</h2>
+      <details>
+        <summary>查看完整状态 JSON</summary>
+        <pre id="rawJson">{}</pre>
+      </details>
+    </section>
+  </div>
+
+  <script>
+    const queryInput = document.getElementById("query");
+    const topKInput = document.getElementById("topK");
+    const askBtn = document.getElementById("askBtn");
+    const statusEl = document.getElementById("status");
+    const answerEl = document.getElementById("answer");
+    const stateGrid = document.getElementById("stateGrid");
+    const citationsEl = document.getElementById("citations");
+    const emptyCitationsEl = document.getElementById("emptyCitations");
+    const rawJsonEl = document.getElementById("rawJson");
+
+    const stateKeys = [
+      ["intent", "Intent"],
+      ["route", "Route"],
+      ["strategy", "Strategy"],
+      ["planner_source", "Planner"],
+      ["rewrite_source", "Rewrite"],
+      ["answer_source", "Answer"],
+      ["judge_source", "Judge"],
+      ["judge_verdict", "Verdict"],
+      ["next_step_source", "Next Step"],
+      ["next_step_action", "Action"],
+    ];
+
+    function renderState(data) {
+      stateGrid.innerHTML = "";
+      stateKeys.forEach(([key, label]) => {
+        const div = document.createElement("div");
+        div.className = "kv";
+        div.innerHTML = `<div class="k">${label}</div><div class="v">${data[key] ?? "-"}</div>`;
+        stateGrid.appendChild(div);
+      });
+    }
+
+    function renderCitations(citations) {
+      citationsEl.innerHTML = "";
+      if (!citations || citations.length === 0) {
+        emptyCitationsEl.style.display = "block";
+        return;
+      }
+      emptyCitationsEl.style.display = "none";
+      citations.forEach((item) => {
+        const li = document.createElement("li");
+        const title = item.title || item.doc_id || "unknown";
+        const path = item.title_path_str ? ` | ${item.title_path_str}` : "";
+        const text = item.text || "";
+        li.textContent = `${title}${path}：${text}`;
+        citationsEl.appendChild(li);
+      });
+    }
+
+    async function ask() {
+      const query = queryInput.value.trim();
+      const topK = Number(topKInput.value || 5);
+      if (!query) {
+        statusEl.textContent = "请输入问题。";
+        return;
+      }
+
+      askBtn.disabled = true;
+      statusEl.textContent = "正在分析，请稍候…";
+      answerEl.textContent = "";
+      rawJsonEl.textContent = "{}";
+      citationsEl.innerHTML = "";
+      emptyCitationsEl.style.display = "block";
+
+      try {
+        const response = await fetch("/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query, top_k: topK }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || "请求失败");
+        }
+
+        const finalResponse = data.final_response || {};
+        answerEl.textContent = finalResponse.message || "未返回最终回答。";
+        answerEl.classList.remove("empty");
+        renderState(data);
+        renderCitations(finalResponse.citations || []);
+        rawJsonEl.textContent = JSON.stringify(data, null, 2);
+        statusEl.textContent = "分析完成。";
+      } catch (error) {
+        statusEl.textContent = `执行失败：${error.message}`;
+        answerEl.textContent = "执行失败，请检查后端日志或模型配置。";
+        answerEl.classList.remove("empty");
+      } finally {
+        askBtn.disabled = false;
+      }
+    }
+
+    askBtn.addEventListener("click", ask);
+  </script>
+</body>
+</html>

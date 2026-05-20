@@ -226,6 +226,35 @@ python app\main.py 总结一下上海的AI政策 --json
 
 先做单独的云雾连通性测试。
 
+## Web 验证页
+
+项目现在提供了一个最小可用的 Web 验证页，便于快速测试：
+
+- 输入问题
+- 查看最终回答
+- 查看 `intent / route / strategy / judge / next_step`
+- 查看完整状态 JSON
+
+服务端入口：
+
+- [server.py](c:/D/Agent-learn/MyProject/app/api/server.py)
+
+前端页面：
+
+- [index.html](c:/D/Agent-learn/MyProject/app/api/static/index.html)
+
+启动方式：
+
+```powershell
+uvicorn app.api.server:app --reload
+```
+
+启动后打开：
+
+```text
+http://127.0.0.1:8000
+```
+
 ## 测试
 
 当前测试基于 `unittest`，可直接执行：
