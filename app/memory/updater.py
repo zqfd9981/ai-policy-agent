@@ -13,7 +13,12 @@ def update_session_memory(
     user_query: str,
     state: AgentState,
 ) -> SessionMemory:
-    """Append the latest turn and refresh working memory."""
+    """
+    Append the latest dialogue turn and refresh working memory.
+
+    Raw turns are stored for traceability, while WorkingMemory only keeps the
+    compact state that is helpful for the next-round reasoning.
+    """
 
     session_memory.turns.append(
         SessionTurn(
@@ -43,12 +48,14 @@ def update_session_memory(
         tool_output = state.tool_output
 
         if isinstance(tool_output, PolicySummaryOutput):
+            # Single-document summary: remember the active policy.
             working_memory.active_doc_id = tool_output.doc_id
             working_memory.active_doc_title = tool_output.title
             working_memory.active_region = str(tool_output.metadata.get("region", "")) or None
             working_memory.summary_scope = "single_doc"
 
         if isinstance(tool_output, MultiPolicySummaryOutput):
+            # Multi-document summary: remember the candidate policy set.
             working_memory.candidate_doc_ids = tool_output.doc_ids
             working_memory.candidate_titles = tool_output.policy_titles
             working_memory.summary_scope = "multi_doc"
@@ -58,12 +65,14 @@ def update_session_memory(
                 ) or None
 
         if isinstance(tool_output, PolicyCompareOutput):
+            # Compare flow: remember left/right comparison anchors.
             working_memory.left_doc_id = tool_output.left_summary.doc_id
             working_memory.left_doc_title = tool_output.left_summary.title
             working_memory.right_doc_id = tool_output.right_summary.doc_id
             working_memory.right_doc_title = tool_output.right_summary.title
             working_memory.summary_scope = "compare"
 
+    # Lightweight rule extraction for the current round focus.
     working_memory.active_topic = infer_topic(user_query)
     working_memory.focus_dimension = infer_focus_dimension(user_query)
     working_memory.active_region = working_memory.active_region or infer_region(user_query)
@@ -72,6 +81,8 @@ def update_session_memory(
 
 
 def infer_topic(query: str) -> str | None:
+    """Infer a coarse topic label from the current user query."""
+
     if "大模型" in query:
         return "大模型政策"
     if "AI" in query or "人工智能" in query:
@@ -80,6 +91,8 @@ def infer_topic(query: str) -> str | None:
 
 
 def infer_focus_dimension(query: str) -> str | None:
+    """Infer which dimension the user is currently focusing on."""
+
     if "支持" in query:
         return "支持重点"
     if "适用对象" in query:
@@ -92,6 +105,8 @@ def infer_focus_dimension(query: str) -> str | None:
 
 
 def infer_region(query: str) -> str | None:
+    """Infer the active region from the current user query."""
+
     for region in ("上海", "北京", "江苏", "浙江", "深圳", "广东", "长三角"):
         if region in query:
             return region

@@ -7,6 +7,13 @@ from app.memory.session import SessionMemory
 
 @dataclass(slots=True)
 class SessionStore:
+    """
+    Minimal in-process session store.
+
+    This is enough for local validation and demo use. It is not persistent:
+    restarting the service clears all sessions.
+    """
+
     sessions: dict[str, SessionMemory] = field(default_factory=dict)
 
     def get_or_create(self, session_id: str) -> SessionMemory:
