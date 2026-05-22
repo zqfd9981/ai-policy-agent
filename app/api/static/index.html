@@ -164,6 +164,9 @@
     <section class="panel">
       <textarea id="query" placeholder="例如：总结一下上海的AI政策"></textarea>
       <div class="controls">
+        <label>Session ID
+          <input id="sessionId" type="text" value="demo-session">
+        </label>
         <label>Top K
           <input id="topK" type="number" min="1" max="20" value="5">
         </label>
@@ -194,11 +197,16 @@
         <summary>查看完整状态 JSON</summary>
         <pre id="rawJson">{}</pre>
       </details>
+      <details>
+        <summary>查看 Session Memory</summary>
+        <pre id="memoryJson">{}</pre>
+      </details>
     </section>
   </div>
 
   <script>
     const queryInput = document.getElementById("query");
+    const sessionIdInput = document.getElementById("sessionId");
     const topKInput = document.getElementById("topK");
     const askBtn = document.getElementById("askBtn");
     const statusEl = document.getElementById("status");
@@ -207,6 +215,7 @@
     const citationsEl = document.getElementById("citations");
     const emptyCitationsEl = document.getElementById("emptyCitations");
     const rawJsonEl = document.getElementById("rawJson");
+    const memoryJsonEl = document.getElementById("memoryJson");
 
     const stateKeys = [
       ["intent", "Intent"],
@@ -260,6 +269,7 @@
       statusEl.textContent = "正在分析，请稍候…";
       answerEl.textContent = "";
       rawJsonEl.textContent = "{}";
+      memoryJsonEl.textContent = "{}";
       citationsEl.innerHTML = "";
       emptyCitationsEl.style.display = "block";
 
@@ -267,7 +277,7 @@
         const response = await fetch("/ask", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query, top_k: topK }),
+          body: JSON.stringify({ query, top_k: topK, session_id: sessionIdInput.value.trim() || "demo-session" }),
         });
 
         const data = await response.json();
@@ -281,6 +291,7 @@
         renderState(data);
         renderCitations(finalResponse.citations || []);
         rawJsonEl.textContent = JSON.stringify(data, null, 2);
+        memoryJsonEl.textContent = JSON.stringify(data.session_memory || {}, null, 2);
         statusEl.textContent = "分析完成。";
       } catch (error) {
         statusEl.textContent = `执行失败：${error.message}`;
