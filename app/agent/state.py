@@ -256,16 +256,14 @@ class AgentState:
         strategy: str,
         route: str,
         strategy_reason: str,
-        rewritten_query: str | None = None,
     ) -> "AgentState":
-        """返回带有后置策略选择结果的新状态。"""
+        """?????????????????"""
 
         return replace(
             self,
             strategy=strategy,
             route=route,
             strategy_reason=strategy_reason,
-            rewritten_query=rewritten_query or self.rewritten_query,
         )
 
     def with_rewrite_result(

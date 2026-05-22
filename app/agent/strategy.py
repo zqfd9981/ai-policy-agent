@@ -32,7 +32,6 @@ class StrategyDecision:
 
     strategy: str
     route: str
-    query: str
     reason: str
 
 
@@ -90,7 +89,7 @@ def choose_retrieval_strategy(
 ) -> StrategyDecision:
     """
     Decide how to consume retrieved evidence.
-    All supported tasks first retrieve; the strategy is selected afterwards.
+    Strategy only selects downstream flow; it does not rewrite query.
     """
 
     normalized_intent = (intent or ROUTE_RETRIEVE).strip().lower()
@@ -100,7 +99,6 @@ def choose_retrieval_strategy(
         return StrategyDecision(
             strategy=STRATEGY_COMPARE,
             route=ROUTE_COMPARE,
-            query=user_query.strip(),
             reason="用户问题是对比型请求，且检索结果中已存在至少两篇可比较政策。",
         )
 
@@ -112,7 +110,6 @@ def choose_retrieval_strategy(
             return StrategyDecision(
                 strategy=STRATEGY_MULTI_DOC_SUMMARY,
                 route=ROUTE_SUMMARIZE,
-                query=user_query.strip(),
                 reason="摘要请求更像地区或主题范围汇总，优先走多文档摘要。",
             )
 
@@ -124,24 +121,19 @@ def choose_retrieval_strategy(
             return StrategyDecision(
                 strategy=STRATEGY_SINGLE_DOC_SUMMARY,
                 route=ROUTE_SUMMARIZE,
-                query=build_single_doc_summary_query(top_candidate.title),
-                reason=(
-                    "摘要请求在检索后已明显集中到单篇政策，"
-                    f"因此转为单篇摘要：{top_candidate.title}。"
-                ),
+                reason=f"摘要请求在检索后已明显集中到单篇政策，因此转为单篇摘要：{top_candidate.title}。",
             )
+
         if len(candidates) >= 2:
             return StrategyDecision(
                 strategy=STRATEGY_MULTI_DOC_SUMMARY,
                 route=ROUTE_SUMMARIZE,
-                query=user_query.strip(),
                 reason="摘要请求命中了多篇高相关政策，更适合走多文档汇总。",
             )
 
     return StrategyDecision(
         strategy=STRATEGY_DIRECT_ANSWER,
         route=ROUTE_RETRIEVE,
-        query=user_query.strip(),
         reason="当前更适合直接基于检索结果组织回答。",
     )
 
@@ -199,20 +191,6 @@ def should_use_multi_doc_summary(
         return True
 
     return False
-
-
-def build_single_doc_summary_query(title: str) -> str:
-    """Build a structured summary query around one policy title."""
-
-    return " ".join(
-        [
-            title.strip(),
-            "政策概览",
-            "支持重点",
-            "适用对象",
-            "申报条件",
-        ]
-    ).strip()
 
 
 def _extract_snippet(text: str, *, max_length: int = 120) -> str:

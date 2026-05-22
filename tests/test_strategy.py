@@ -10,6 +10,8 @@ from app.agent.strategy import (
     aggregate_retrieval_documents,
     choose_retrieval_strategy,
 )
+from app.agent.state import AgentState
+from app.models.query import AgentQuery
 from app.retrieval.retriever import RetrievalResult
 from app.tools.retrieve_policy import RetrievePolicyOutput, RetrievedPolicyChunk
 
@@ -87,7 +89,6 @@ class StrategyTests(unittest.TestCase):
 
         self.assertEqual(decision.strategy, STRATEGY_SINGLE_DOC_SUMMARY)
         self.assertEqual(decision.route, ROUTE_SUMMARIZE)
-        self.assertIn("支持重点", decision.query)
 
     def test_summary_intent_without_clear_single_doc_uses_multi_doc_summary(self) -> None:
         output = build_output(
@@ -123,6 +124,20 @@ class StrategyTests(unittest.TestCase):
 
         self.assertEqual(decision.strategy, STRATEGY_COMPARE)
         self.assertEqual(decision.route, ROUTE_COMPARE)
+
+    def test_strategy_result_does_not_override_rewritten_query(self) -> None:
+        state = AgentState(
+            query=AgentQuery("总结一下上海的AI政策"),
+            rewritten_query="上海近两年大模型应用支持政策汇总",
+        )
+
+        updated = state.with_strategy_result(
+            strategy=STRATEGY_MULTI_DOC_SUMMARY,
+            route=ROUTE_SUMMARIZE,
+            strategy_reason="范围摘要",
+        )
+
+        self.assertEqual(updated.rewritten_query, "上海近两年大模型应用支持政策汇总")
 
 
 if __name__ == "__main__":

@@ -230,7 +230,6 @@ def strategy_node(state: AgentState) -> AgentState:
         strategy=decision.strategy,
         route=decision.route,
         strategy_reason=decision.reason,
-        rewritten_query=decision.query or state.rewritten_query,
     )
 
 
