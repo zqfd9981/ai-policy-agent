@@ -21,8 +21,9 @@ ANSWER_SYSTEM_PROMPT = """
 1. 只根据提供的 evidence/context 回答。
 2. 回答要直接、清晰、中文自然。
 3. 如果任务类型是 summarize，优先输出结构化总结。
-4. 如果证据不足，要明确说明，而不是编造。
-5. 不要输出“根据以上内容”等空泛套话，直接给结果。
+4. 如果任务类型是 compare，且用户要求“举例 / 场景 / 哪个更好 / 更适合”，优先输出场景化建议，而不是八股式政策综述。
+5. 如果证据不足，要明确说明，而不是编造。
+6. 不要输出“根据以上内容”等空泛套话，直接给结果。
 """.strip()
 
 
@@ -169,16 +170,52 @@ def build_answer_prompt(
 ) -> str:
     """构建给 LLM final answer 的用户提示词。"""
 
-    return "\n".join(
+    prompt_lines = [
+        f"用户问题：{user_query}",
+        f"任务类型：{intent or 'unknown'}",
+        f"回答风格：{answer_style or 'direct'}",
+    ]
+
+    if intent == "compare" and is_scenario_compare_query(user_query):
+        prompt_lines.extend(
+            [
+                "",
+                "额外回答要求：",
+                "- 这轮不是普通政策综述，而是场景化比较建议。",
+                "- 先直接回答：什么场景更适合北京，什么场景更适合上海/另一方。",
+                "- 至少给出 2 到 4 个具体场景例子，例如科研平台、制造业落地、企业补贴申请、AI for Science、人才引进等。",
+                "- 不要再按“政策概览 / 支持重点 / 适用对象 / 申报条件”四段模板展开。",
+                "- 输出风格更像顾问建议：先结论，再场景例子，再给出简短原因。",
+            ]
+        )
+
+    prompt_lines.extend(
         [
-            f"用户问题：{user_query}",
-            f"任务类型：{intent or 'unknown'}",
-            f"回答风格：{answer_style or 'direct'}",
             "",
             "请基于以下证据生成最终回答：",
             context_text,
         ]
     )
+
+    return "\n".join(prompt_lines)
+
+
+def is_scenario_compare_query(query: str) -> bool:
+    """Detect compare questions that ask for concrete scenes / recommendations."""
+
+    scenario_keywords = (
+        "举例",
+        "场景",
+        "哪个更好",
+        "哪个好",
+        "更适合",
+        "适合什么",
+        "什么情况下",
+        "哪种情况",
+        "在什么情况下",
+        "具体场景",
+    )
+    return any(keyword in query for keyword in scenario_keywords)
 
 
 def fallback_answer(

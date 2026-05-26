@@ -11,6 +11,11 @@ if __package__ in (None, ""):
 
 from pypdf import PdfReader
 
+try:
+    import fitz
+except ImportError:  # pragma: no cover - 依赖是否安装取决于运行环境
+    fitz = None
+
 from app.ingest.loader_factory import find_source_file_for_metadata
 from app.ingest.metadata_loader import load_metadata_map
 from app.models.document import Document
@@ -91,30 +96,88 @@ def _extract_pdf_text(source_path: Path) -> str:
     更复杂的页眉页脚去除、断行合并等处理，后续交给 clean 模块。
     """
 
+    page_texts = extract_text_with_pypdf(source_path)
+    joined_text = "\n\n".join(page_texts)
+    if page_texts and not looks_like_garbled_pdf_text(joined_text):
+        return joined_text
+
+    fallback_page_texts = extract_text_with_pymupdf(source_path)
+    fallback_joined_text = "\n\n".join(fallback_page_texts)
+    if fallback_page_texts and not looks_like_garbled_pdf_text(fallback_joined_text):
+        return fallback_joined_text
+
+    if page_texts:
+        return joined_text
+    if fallback_page_texts:
+        return fallback_joined_text
+
+    raise PdfLoaderError(f"pdf 未提取到任何正文文本: {source_path}")
+
+
+def extract_text_with_pypdf(source_path: Path) -> list[str]:
+    """First-pass PDF extraction using pypdf."""
+
     try:
         reader = PdfReader(str(source_path))
-    except Exception as error:  # pragma: no cover - 依赖底层库报错类型
+    except Exception as error:  # pragma: no cover
         raise PdfLoaderError(f"打开 pdf 失败: {source_path}，原因: {error}") from error
 
     page_texts: list[str] = []
-
     for page_index, page in enumerate(reader.pages, start=1):
         try:
             text = page.extract_text() or ""
-        except Exception as error:  # pragma: no cover - 依赖底层库报错类型
+        except Exception as error:  # pragma: no cover
             raise PdfLoaderError(
                 f"提取 pdf 第 {page_index} 页文本失败: {source_path}，原因: {error}"
             ) from error
 
-        # 只保留非空页，避免大量空白页把正文冲淡。
         stripped_text = text.strip()
         if stripped_text:
             page_texts.append(stripped_text)
 
-    if not page_texts:
-        raise PdfLoaderError(f"pdf 未提取到任何正文文本: {source_path}")
+    return page_texts
 
-    return "\n\n".join(page_texts)
+
+def extract_text_with_pymupdf(source_path: Path) -> list[str]:
+    """Fallback PDF extraction using PyMuPDF for garbled pypdf outputs."""
+
+    if fitz is None:
+        return []
+
+    try:
+        document = fitz.open(str(source_path))
+    except Exception as error:  # pragma: no cover
+        raise PdfLoaderError(f"使用 PyMuPDF 打开 pdf 失败: {source_path}，原因: {error}") from error
+
+    page_texts: list[str] = []
+    for page_index in range(document.page_count):
+        try:
+            text = document.load_page(page_index).get_text("text") or ""
+        except Exception as error:  # pragma: no cover
+            raise PdfLoaderError(
+                f"使用 PyMuPDF 提取 pdf 第 {page_index + 1} 页失败: {source_path}，原因: {error}"
+            ) from error
+
+        stripped_text = text.strip()
+        if stripped_text:
+            page_texts.append(stripped_text)
+
+    return page_texts
+
+
+def looks_like_garbled_pdf_text(text: str) -> bool:
+    """Detect obvious pypdf extraction corruption such as repeated '/Gxx' glyph codes."""
+
+    normalized_text = text.lower()
+    if normalized_text.count("/g") >= 10:
+        return True
+
+    cjk_count = sum("\u4e00" <= char <= "\u9fff" for char in text)
+    slash_g_count = normalized_text.count("/g")
+    if slash_g_count >= 3 and cjk_count < 40:
+        return True
+
+    return False
 
 
 def main() -> None:

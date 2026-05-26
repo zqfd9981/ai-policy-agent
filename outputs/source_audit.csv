@@ -1,0 +1,22 @@
+﻿doc_id,title,metadata_source_format,pdf_count,txt_count,preferred_exists,status,suggestion,pdf_paths,txt_paths
+SH001,关于人工智能“模塑申城”的实施方案,pdf,1,0,True,pdf_only,当前仍是 pdf 主源；如能拿到官方正文，建议补 txt。,shanghai\pdf\SH001_关于人工智能“模塑申城”的实施方案.pdf,
+SH002,上海市进一步扩大人工智能应用的若干措施,pdf,1,0,True,pdf_only,当前仍是 pdf 主源；如能拿到官方正文，建议补 txt。,shanghai\pdf\SH002_上海市进一步扩大人工智能应用的若干措施.pdf,
+SH003,上海市加快推动“AI+制造”发展的实施方案,pdf,1,0,True,pdf_only,当前仍是 pdf 主源；如能拿到官方正文，建议补 txt。,shanghai\pdf\SH003_上海市加快推动“AI+制造”发展的实施方案.pdf,
+ZJ001,杭州市加快建设人工智能创新高地实施方案（2025年版）,txt,1,1,True,ok_with_backup_pdf,当前已用 txt 主源，pdf 可继续保留作备份。,zhejiang\pdf\ZJ001_杭州市加快建设人工智能创新高地实施方案（2025年版）.pdf,zhejiang\txt\ZJ001.txt
+ZJ002,浙江省加快推动“人工智能+科学”创新发展行动计划（2025—2027年）,txt,0,1,True,txt_only,当前仅有 txt 主源，可继续补留原 pdf 作为备份。,,zhejiang\txt\ZJ002.txt
+ZJ003,浙江省推进人工智能终端产业发展行动计划,txt,0,1,True,txt_only,当前仅有 txt 主源，可继续补留原 pdf 作为备份。,,zhejiang\txt\ZJ003.txt
+JS001,江苏省“人工智能+”行动方案,pdf,1,0,True,pdf_only,当前仍是 pdf 主源；如能拿到官方正文，建议补 txt。,jiangsu\pdf\JS001_省政府关于印发江苏省“人工智能＋”行动方案的通知（苏政发〔2025〕108）.pdf,
+JS002,市政府办公室关于印发苏州市加快建设“人工智能+”城市行动方案（2025～2026年）的通知,txt,0,1,True,txt_only,当前仅有 txt 主源，可继续补留原 pdf 作为备份。,,jiangsu\txt\JS002.txt
+JS003,苏州市进一步加快建设“人工智能+”城市的若干政策措施,txt,0,1,True,txt_only,当前仅有 txt 主源，可继续补留原 pdf 作为备份。,,jiangsu\txt\JS003.txt
+JS004,南京市加快“人工智能+政务”应用场景建设推进方案,txt,0,1,True,txt_only,当前仅有 txt 主源，可继续补留原 pdf 作为备份。,,jiangsu\txt\JS004.txt
+AH001,安徽省“人工智能+万物”应用行动方案,txt,0,1,True,txt_only,当前仅有 txt 主源，可继续补留原 pdf 作为备份。,,anhui\txt\AH001_安徽省“人工智能+万物”应用行动方案.txt
+AH002,安徽省通用人工智能创新发展三年行动计划（2023—2025年）,pdf,1,0,True,pdf_only,当前仍是 pdf 主源；如能拿到官方正文，建议补 txt。,anhui\pdf\AH002_安徽省通用人工智能创新发展三年行动计划（2023—2025年）.pdf,
+AH003,打造通用人工智能产业创新和应用高地若干政策,pdf,1,0,True,pdf_only,当前仍是 pdf 主源；如能拿到官方正文，建议补 txt。,anhui\pdf\AH003_皖政秘〔2025〕108号.pdf,
+BJ001,北京市推动“人工智能+”行动计划（2024-2025年）,txt,0,1,True,txt_only,当前仅有 txt 主源，可继续补留原 pdf 作为备份。,,beijing\txt\BJ001.txt
+BJ002,北京市促进通用人工智能创新发展的若干措施,txt,0,1,True,txt_only,当前仅有 txt 主源，可继续补留原 pdf 作为备份。,,beijing\txt\BJ002.txt
+BJ003,北京市加快人工智能赋能科学研究高质量发展行动计划（2025—2027年）,txt,0,1,True,txt_only,当前仅有 txt 主源，可继续补留原 pdf 作为备份。,,beijing\txt\BJ003.txt
+SZ001,深圳市打造人工智能先锋城市的若干措施,txt,0,1,True,txt_only,当前仅有 txt 主源，可继续补留原 pdf 作为备份。,,shenzhen\txt\SZ001.txt
+SZ002,深圳市加快推进人工智能终端产业发展行动计划（2025—2026年）,txt,0,1,True,txt_only,当前仅有 txt 主源，可继续补留原 pdf 作为备份。,,shenzhen\txt\SZ002.txt
+SZ003,深圳市“人工智能+”先进制造业行动计划（2026—2027年）,pdf,1,1,True,migrate_ready,已存在 txt，可把 metadata.source_format 从 pdf 改为 txt。,shenzhen\pdf\SZ003.pdf,shenzhen\txt\SZ003.txt
+GD001,广东省关于人工智能赋能千行百业的若干措施,txt,0,1,True,txt_only,当前仅有 txt 主源，可继续补留原 pdf 作为备份。,,guangdong\txt\GD001.txt
+GD002,广东省人工智能赋能制造业高质量发展行动方案（2025—2027年）,txt,0,1,True,txt_only,当前仅有 txt 主源，可继续补留原 pdf 作为备份。,,guangdong\txt\GD002.txt

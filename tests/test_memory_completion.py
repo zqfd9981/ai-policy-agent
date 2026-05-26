@@ -2,11 +2,49 @@ from __future__ import annotations
 
 import unittest
 
-from app.memory.completion import contextualize_query
-from app.memory.session import SessionMemory, WorkingMemory
+from app.memory.completion import (
+    ContextCompletionDecision,
+    contextualize_query,
+    resolve_context_query,
+)
+from app.memory.session import MemoryEntity, SessionMemory, WorkingMemory
 
 
 class MemoryCompletionTests(unittest.TestCase):
+    def test_resolve_context_query_prefers_llm_completion_when_available(self) -> None:
+        class StubCompleter:
+            is_available = True
+
+            def complete(self, *, user_query: str, session_memory: SessionMemory) -> ContextCompletionDecision:
+                return ContextCompletionDecision(
+                    contextualized_query="比较上海和北京的AI政策，有什么差异，哪个地方更好",
+                    reason="stub llm",
+                    source="llm",
+                    resolved_action="compare",
+                    resolved_entities=("上海", "北京"),
+                )
+
+        session_memory = SessionMemory(
+            session_id="demo-0",
+            working_memory=WorkingMemory(
+                active_topic="AI政策",
+                recent_entities=(
+                    MemoryEntity(kind="region", key="上海", label="上海"),
+                    MemoryEntity(kind="region", key="北京", label="北京"),
+                ),
+            ),
+        )
+
+        decision = resolve_context_query(
+            "这两个地方哪个更好",
+            session_memory=session_memory,
+            completer=StubCompleter(),
+        )
+
+        self.assertEqual(decision.source, "llm")
+        self.assertEqual(decision.resolved_action, "compare")
+        self.assertEqual(decision.resolved_entities, ("上海", "北京"))
+
     def test_region_switch_query_uses_working_memory_topic(self) -> None:
         session_memory = SessionMemory(
             session_id="demo-1",
@@ -18,6 +56,20 @@ class MemoryCompletionTests(unittest.TestCase):
         )
 
         result = contextualize_query("那北京呢", session_memory=session_memory)
+
+        self.assertEqual(result, "总结一下北京的AI政策")
+
+    def test_region_switch_query_accepts_natural_variant(self) -> None:
+        session_memory = SessionMemory(
+            session_id="demo-1b",
+            working_memory=WorkingMemory(
+                active_region="上海",
+                active_topic="AI政策",
+                active_strategy="multi_doc_summary",
+            ),
+        )
+
+        result = contextualize_query("那么北京呢", session_memory=session_memory)
 
         self.assertEqual(result, "总结一下北京的AI政策")
 
@@ -53,6 +105,78 @@ class MemoryCompletionTests(unittest.TestCase):
         result = contextualize_query("第二篇呢", session_memory=session_memory)
 
         self.assertEqual(result, "总结一下上海市进一步扩大人工智能应用的若干措施")
+
+    def test_group_compare_query_uses_recent_region_entities(self) -> None:
+        session_memory = SessionMemory(
+            session_id="demo-4",
+            working_memory=WorkingMemory(
+                active_topic="AI政策",
+                recent_entities=(
+                    MemoryEntity(kind="region", key="上海", label="上海"),
+                    MemoryEntity(kind="region", key="北京", label="北京"),
+                ),
+            ),
+        )
+
+        result = contextualize_query(
+            "这两个地方的政策有什么差异？哪个地方更好？",
+            session_memory=session_memory,
+        )
+
+        self.assertEqual(
+            result,
+            "比较上海和北京的AI政策，有什么差异，哪个地方更好",
+        )
+
+    def test_resolve_context_query_returns_structured_decision(self) -> None:
+        session_memory = SessionMemory(
+            session_id="demo-5",
+            working_memory=WorkingMemory(
+                active_topic="AI政策",
+                recent_entities=(
+                    MemoryEntity(kind="region", key="上海", label="上海"),
+                    MemoryEntity(kind="region", key="北京", label="北京"),
+                ),
+            ),
+        )
+
+        decision = resolve_context_query(
+            "这两个地方的政策有什么差异？哪个地方更好？",
+            session_memory=session_memory,
+        )
+
+        self.assertEqual(decision.source, "rule")
+        self.assertEqual(decision.resolved_action, "compare")
+        self.assertEqual(decision.resolved_entities, ("上海", "北京"))
+        self.assertEqual(
+            decision.contextualized_query,
+            "比较上海和北京的AI政策，有什么差异，哪个地方更好",
+        )
+
+    def test_region_switch_rule_does_not_hijack_compare_query(self) -> None:
+        session_memory = SessionMemory(
+            session_id="demo-6",
+            working_memory=WorkingMemory(
+                active_topic="AI政策",
+                recent_entities=(
+                    MemoryEntity(kind="region", key="上海", label="上海"),
+                    MemoryEntity(kind="region", key="北京", label="北京"),
+                ),
+            ),
+        )
+
+        decision = resolve_context_query(
+            "举例子说明一下，在什么具体场景下，北京好或者是上海好",
+            session_memory=session_memory,
+        )
+
+        self.assertEqual(decision.source, "rule")
+        self.assertEqual(decision.resolved_action, "compare")
+        self.assertEqual(decision.resolved_entities, ("上海", "北京"))
+        self.assertEqual(
+            decision.contextualized_query,
+            "比较上海和北京的AI政策，有什么差异，哪个地方更好",
+        )
 
 
 if __name__ == "__main__":

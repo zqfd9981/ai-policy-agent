@@ -4,6 +4,38 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+@dataclass(frozen=True, slots=True)
+class MemoryEntity:
+    """A lightweight entity remembered across turns for reference resolution."""
+
+    kind: str
+    key: str
+    label: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "kind": self.kind,
+            "key": self.key,
+            "label": self.label,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonMemory:
+    """Tracks the currently active comparison group, if one exists."""
+
+    kind: str
+    members: tuple[str, ...]
+    topic: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "members": list(self.members),
+            "topic": self.topic,
+        }
+
+
 @dataclass(slots=True)
 class SessionTurn:
     """One raw conversation turn kept for session history display and tracing."""
@@ -47,6 +79,10 @@ class WorkingMemory:
     # single_doc / multi_doc / compare
     summary_scope: str | None = None
 
+    # Recent dialogue objects used for resolving phrases like “这两个地方”“最后一个”.
+    recent_entities: tuple[MemoryEntity, ...] = ()
+    active_comparison: ComparisonMemory | None = None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "active_region": self.active_region,
@@ -63,6 +99,10 @@ class WorkingMemory:
             "right_doc_id": self.right_doc_id,
             "right_doc_title": self.right_doc_title,
             "summary_scope": self.summary_scope,
+            "recent_entities": [item.to_dict() for item in self.recent_entities],
+            "active_comparison": (
+                self.active_comparison.to_dict() if self.active_comparison is not None else None
+            ),
         }
 
 

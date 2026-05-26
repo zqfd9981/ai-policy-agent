@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.agent.graph import run_agent_workflow
-from app.memory.completion import contextualize_query
+from app.memory.completion import resolve_context_query
 from app.memory.store import get_session_store
 from app.memory.updater import update_session_memory
 
@@ -38,10 +38,11 @@ def ask(request: AskRequest) -> dict[str, object]:
     session_memory = session_store.get_or_create(request.session_id)
 
     # Step 1: use working memory to complete short follow-up queries.
-    contextualized_query = contextualize_query(
+    context_resolution = resolve_context_query(
         request.query,
         session_memory=session_memory,
     )
+    contextualized_query = context_resolution.contextualized_query
 
     # Step 2: run the main agent workflow on the completed query.
     state = run_agent_workflow(contextualized_query, top_k=request.top_k)
@@ -56,5 +57,12 @@ def ask(request: AskRequest) -> dict[str, object]:
     payload = state.to_dict()
     payload["session_id"] = request.session_id
     payload["contextualized_query"] = contextualized_query
+    payload["context_resolution"] = {
+        "contextualized_query": context_resolution.contextualized_query,
+        "reason": context_resolution.reason,
+        "source": context_resolution.source,
+        "resolved_action": context_resolution.resolved_action,
+        "resolved_entities": list(context_resolution.resolved_entities),
+    }
     payload["session_memory"] = session_memory.to_dict()
     return payload

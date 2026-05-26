@@ -67,7 +67,37 @@ def find_source_file_for_metadata(
     默认会顺手校验：metadata 记录的 source_format 是否和真实文件扩展名一致。
     """
 
-    source_path = find_source_file(metadata.doc_id, raw_root=raw_root)
+    root_path = Path(raw_root)
+    _validate_raw_root(root_path)
+
+    candidates = _find_candidates(metadata.doc_id, root_path)
+    if not candidates:
+        raise SourceFileLookupError(f"未找到 doc_id={metadata.doc_id} 对应的 raw 文件。")
+
+    # 同一 doc_id 允许同时保留 pdf / txt 等多种原始源。
+    # 此时优先选择与 metadata.source_format 一致的那一份，避免因为存在辅助文本源而报“多文件冲突”。
+    preferred_candidates = [
+        path
+        for path in candidates
+        if path.suffix.lower() == f".{metadata.source_format.lower()}"
+    ]
+
+    if preferred_candidates:
+        if len(preferred_candidates) > 1:
+            candidate_text = "\n".join(f"- {path}" for path in preferred_candidates)
+            raise SourceFileLookupError(
+                f"doc_id={metadata.doc_id} 存在多个 {metadata.source_format} 原始文件，无法唯一确定：\n"
+                f"{candidate_text}"
+            )
+        source_path = preferred_candidates[0]
+    else:
+        if len(candidates) > 1:
+            candidate_text = "\n".join(f"- {path}" for path in candidates)
+            raise SourceFileLookupError(
+                f"doc_id={metadata.doc_id} 匹配到了多个 raw 文件，且没有与 metadata.source_format="
+                f"{metadata.source_format} 一致的候选：\n{candidate_text}"
+            )
+        source_path = candidates[0]
 
     if validate_source_format:
         actual_source_format = source_path.suffix.lstrip(".").lower()

@@ -3,6 +3,6 @@
   "index_path": "C:\\D\\Agent-learn\\MyProject\\outputs\\retrieval\\policy_chunks.faiss",
   "payload_path": "C:\\D\\Agent-learn\\MyProject\\outputs\\retrieval\\policy_payloads.jsonl",
   "source_chunk_path": "C:\\D\\Agent-learn\\MyProject\\outputs\\chunks\\policy_chunks.jsonl",
-  "payload_count": 469,
+  "payload_count": 388,
   "vector_dimension": 768
 }

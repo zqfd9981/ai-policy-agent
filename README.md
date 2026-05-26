@@ -255,6 +255,32 @@ uvicorn app.api.server:app --reload
 http://127.0.0.1:8000
 ```
 
+## 数据重建
+
+当你修改这些内容后：
+
+- `data/raw/...`
+- `data/metadata/policies.csv`
+- 清洗 / chunk / 检索相关代码
+
+需要先重建 chunk 与检索索引，再做验证。
+
+正式重建入口：
+
+- [rebuild_data.py](c:/D/Agent-learn/MyProject/scripts/rebuild_data.py)
+
+全量重建：
+
+```powershell
+python scripts/rebuild_data.py
+```
+
+只做局部 chunk 调试（不会覆盖正式索引）：
+
+```powershell
+python scripts/rebuild_data.py --chunks-only --doc-ids BJ001 BJ002
+```
+
 ## 测试
 
 当前测试基于 `unittest`，可直接执行：
