@@ -1,0 +1,142 @@
+[
+  {
+    "id": "retrieve_beijing_ai",
+    "query": "北京AI政策",
+    "top_k": 5,
+    "expected": {
+      "resolved_action": "retrieve",
+      "response_mode": "direct_answer",
+      "route": "retrieve",
+      "strategy": "direct_answer"
+    },
+    "manual_checks": [
+      "回答不应为空",
+      "回答应围绕北京政策",
+      "不应出现无关地区作为主对象"
+    ]
+  },
+  {
+    "id": "summary_shanghai_ai",
+    "query": "总结一下上海的AI政策",
+    "top_k": 5,
+    "expected": {
+      "resolved_action": "summarize",
+      "response_mode": "structured_summary",
+      "retrieval_goal": "multi_policy_region",
+      "route": "summarize",
+      "strategy": "multi_doc_summary"
+    },
+    "manual_checks": [
+      "回答应有摘要结构",
+      "应覆盖多篇上海政策"
+    ]
+  },
+  {
+    "id": "single_policy_bj002",
+    "query": "总结一下北京市促进通用人工智能创新发展的若干措施",
+    "top_k": 5,
+    "expected": {
+      "resolved_action": "summarize",
+      "response_mode": "structured_summary",
+      "retrieval_goal": "single_policy",
+      "route": "summarize",
+      "strategy": "single_doc_summary"
+    },
+    "manual_checks": [
+      "回答应围绕 BJ002",
+      "不应出现大面积乱码"
+    ]
+  },
+  {
+    "id": "compare_bj_sh_model",
+    "query": "比较北京和上海的大模型政策",
+    "top_k": 5,
+    "expected": {
+      "resolved_action": "compare",
+      "response_mode": "policy_overview_compare",
+      "retrieval_goal": "compare_regions",
+      "route": "compare",
+      "strategy": "compare"
+    },
+    "manual_checks": [
+      "回答应同时覆盖北京和上海",
+      "应体现政策差异",
+      "不应串到无关地区"
+    ]
+  },
+  {
+    "id": "scenario_compare_bj_sh",
+    "query": "具体在哪些场景下适合上海？哪些场景北京更好？举几个例子说明",
+    "top_k": 5,
+    "expected": {
+      "resolved_action": "compare",
+      "response_mode": "scenario_advice_compare",
+      "focus": "location_choice",
+      "route": "compare",
+      "strategy": "compare"
+    },
+    "manual_checks": [
+      "回答应给出场景例子",
+      "回答不能只是八股政策概览",
+      "应同时说北京和上海"
+    ]
+  },
+  {
+    "id": "multi_question_compare_bj_sh",
+    "query": "这两个地方的政策有什么差异？哪个地方更好？",
+    "session_id": "eval-bj-sh",
+    "history": [
+      {
+        "query": "你来总结总结上海的AI政策",
+        "top_k": 5
+      },
+      {
+        "query": "那么你来说说北京的呢",
+        "top_k": 5
+      }
+    ],
+    "top_k": 5,
+    "expected": {
+      "resolved_action": "compare",
+      "response_mode": "scenario_advice_compare",
+      "retrieval_goal": "compare_regions",
+      "focus": "location_choice",
+      "route": "compare",
+      "strategy": "compare"
+    },
+    "manual_checks": [
+      "回答应先差异后建议",
+      "应同时回答“差异”和“哪个更好”"
+    ]
+  },
+  {
+    "id": "expand_compare_with_anhui",
+    "query": "安徽和它们比又怎么样",
+    "session_id": "eval-bj-sh-ah",
+    "history": [
+      {
+        "query": "你来总结总结上海的AI政策",
+        "top_k": 5
+      },
+      {
+        "query": "那么你来说说北京的呢",
+        "top_k": 5
+      },
+      {
+        "query": "这两个地方的政策有什么差异？哪个地方更好？",
+        "top_k": 5
+      }
+    ],
+    "top_k": 5,
+    "expected": {
+      "resolved_action": "compare",
+      "response_mode": "scenario_advice_compare",
+      "retrieval_goal": "compare_regions_multi",
+      "focus": "location_choice"
+    },
+    "manual_checks": [
+      "不应退化成安徽内部政策比较",
+      "应识别为安徽加入已有地区比较组"
+    ]
+  }
+]
