@@ -384,7 +384,9 @@ def score_metadata_candidate(query: str, metadata: PolicyMetadata) -> tuple[int,
             score += 2
 
     if metadata.tier == "core":
-        score += 3
+        score += 6
+    else:
+        score -= 2
 
     if any(marker in metadata.title for marker in ("行动方案", "行动计划", "实施方案", "若干措施")):
         score += 2
@@ -392,7 +394,53 @@ def score_metadata_candidate(query: str, metadata: PolicyMetadata) -> tuple[int,
     if "人工智能" in metadata.title or "人工智能" in metadata.theme:
         score += 2
 
+    # 对地区级 compare，优先选能代表地区“主干政策画像”的文档，而不是过窄的专题补充政策。
+    score += score_policy_breadth(metadata)
+
     return score, parse_publish_date_key(metadata.publish_date)
+
+
+def score_policy_breadth(metadata: PolicyMetadata) -> int:
+    """Estimate how representative a policy is for region-level comparison."""
+
+    score = 0
+    normalized_theme = metadata.theme.strip().lower()
+    normalized_title = metadata.title.strip().lower()
+    normalized_notes = metadata.notes.strip().lower()
+
+    broad_theme_markers = (
+        "人工智能+应用",
+        "ai总纲",
+        "通用人工智能",
+    )
+    if any(marker in normalized_theme for marker in broad_theme_markers):
+        score += 5
+
+    narrow_theme_markers = (
+        "ai+science",
+        "ai+制造",
+        "制造",
+        "医疗",
+        "science",
+    )
+    if any(marker in normalized_theme for marker in narrow_theme_markers):
+        score -= 3
+
+    broad_title_markers = (
+        "行动计划",
+        "若干措施",
+        "实施方案",
+    )
+    if any(marker in normalized_title for marker in broad_title_markers):
+        score += 2
+
+    if any(marker in normalized_notes for marker in ("总纲", "核心支持政策", "主干政策")):
+        score += 3
+
+    if any(marker in normalized_notes for marker in ("专题", "偏", "补充")):
+        score -= 2
+
+    return score
 
 
 def extract_compare_query_keywords(query: str) -> tuple[str, ...]:

@@ -56,6 +56,7 @@ def ask(request: AskRequest) -> dict[str, object]:
         retrieval_goal=context_resolution.retrieval_goal,
         focus=context_resolution.focus,
         answer_plan=context_resolution.answer_plan,
+        resolved_entities=context_resolution.resolved_entities,
     )
 
     # Step 3: persist the latest turn and distilled working memory.

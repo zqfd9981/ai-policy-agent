@@ -24,7 +24,13 @@ from app.agent.nodes import (
     summarize_node,
 )
 from app.agent.strategy import STRATEGY_MULTI_DOC_SUMMARY, STRATEGY_SINGLE_DOC_SUMMARY
-from app.agent.router import DEFAULT_SUPPORTED_ROUTES
+from app.agent.router import (
+    DEFAULT_SUPPORTED_ROUTES,
+    ROUTE_COMPARE,
+    ROUTE_RETRIEVE,
+    ROUTE_SUMMARIZE,
+    ROUTE_UNSUPPORTED,
+)
 from app.agent.state import AgentState
 from app.models.query import DEFAULT_QUERY_TOP_K, AgentQuery
 from app.models.response import AgentResponse
@@ -204,12 +210,15 @@ def build_initial_state(
     retrieval_goal: str | None = None,
     focus: str | None = None,
     answer_plan: dict[str, object] | None = None,
+    resolved_entities: tuple[str, ...] | None = None,
 ) -> AgentState:
     """构建工作流的初始状态。"""
 
     normalized_query = query if isinstance(query, AgentQuery) else AgentQuery(query, top_k=top_k)
+    initial_route = derive_initial_route_from_resolved_action(resolved_action)
     return AgentState(
         query=normalized_query,
+        route=initial_route,
         max_retries=max_retries,
         resolved_action=resolved_action,
         needs_rag=needs_rag,
@@ -219,7 +228,19 @@ def build_initial_state(
         retrieval_goal=retrieval_goal,
         focus=focus,
         answer_plan=answer_plan,
+        resolved_entities=resolved_entities or (),
     )
+
+
+def derive_initial_route_from_resolved_action(resolved_action: str | None) -> str | None:
+    """Map resolver action to the first executable route in the graph."""
+
+    normalized_action = (resolved_action or "").strip().lower()
+    if normalized_action in {ROUTE_RETRIEVE, ROUTE_SUMMARIZE, ROUTE_COMPARE}:
+        return ROUTE_RETRIEVE
+    if normalized_action == "chat":
+        return ROUTE_UNSUPPORTED
+    return None
 
 
 def run_agent_workflow(
@@ -235,6 +256,7 @@ def run_agent_workflow(
     retrieval_goal: str | None = None,
     focus: str | None = None,
     answer_plan: dict[str, object] | None = None,
+    resolved_entities: tuple[str, ...] | None = None,
     rewriter: PolicyAgentRewriter | None = None,
     answerer: PolicyAgentAnswerer | None = None,
     judge: PolicyAgentJudge | None = None,
@@ -249,7 +271,6 @@ def run_agent_workflow(
     """函数式入口：执行一次完整 Agent 工作流。"""
 
     graph = PolicyAgentGraph(
-        planner=planner,
         rewriter=rewriter,
         answerer=answerer,
         judge=judge,
@@ -274,12 +295,13 @@ def run_agent_workflow(
         retrieval_goal=retrieval_goal,
         focus=focus,
         answer_plan=answer_plan,
+        resolved_entities=resolved_entities,
     )
     state_for_execution = initial_state
     if state_for_execution.resolved_action is None:
         state_for_execution = planner_node(
             state_for_execution,
-            planner=planner,
+            planner=None,
             supported_routes=cast(frozenset[str], supported_routes),
         )
     rewritten_state = rewrite_node(

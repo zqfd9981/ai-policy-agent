@@ -87,6 +87,7 @@ def choose_retrieval_strategy(
     user_query: str,
     retrieval_output: RetrievePolicyOutput,
     retrieval_goal: str | None = None,
+    resolved_entities: tuple[str, ...] = (),
 ) -> StrategyDecision:
     """
     Decide how to consume retrieved evidence.
@@ -97,7 +98,14 @@ def choose_retrieval_strategy(
     normalized_retrieval_goal = (retrieval_goal or "").strip().lower()
     candidates = aggregate_retrieval_documents(retrieval_output)
 
-    if normalized_retrieval_goal in {"compare_regions", "compare_regions_multi", "compare_policies"} and len(candidates) >= 2:
+    if normalized_retrieval_goal in {"compare_regions", "compare_regions_multi"} and len(resolved_entities) >= 2:
+        return StrategyDecision(
+            strategy=STRATEGY_COMPARE,
+            route=ROUTE_COMPARE,
+            reason="resolver 已明确当前是地区级比较，直接进入 compare。"
+        )
+
+    if normalized_retrieval_goal == "compare_policies" and len(candidates) >= 2:
         return StrategyDecision(
             strategy=STRATEGY_COMPARE,
             route=ROUTE_COMPARE,

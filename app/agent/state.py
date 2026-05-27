@@ -40,6 +40,7 @@ class AgentState:
     retrieval_goal: str | None = None
     focus: str | None = None
     answer_plan: dict[str, Any] | None = None
+    resolved_entities: tuple[str, ...] = ()
     planner_reason: str | None = None
     planner_source: str | None = None
     rewritten_query: str | None = None
@@ -88,6 +89,9 @@ class AgentState:
         normalized_retrieval_goal = self.retrieval_goal.strip().lower() if self.retrieval_goal else None
         normalized_focus = self.focus.strip().lower() if self.focus else None
         normalized_answer_plan = dict(self.answer_plan) if self.answer_plan is not None else None
+        normalized_resolved_entities = tuple(
+            item.strip() for item in self.resolved_entities if item and item.strip()
+        )
         normalized_planner_reason = self.planner_reason.strip() if self.planner_reason else None
         normalized_planner_source = self.planner_source.strip().lower() if self.planner_source else None
         normalized_rewritten_query = self.rewritten_query.strip() if self.rewritten_query else None
@@ -148,6 +152,7 @@ class AgentState:
         object.__setattr__(self, "retrieval_goal", normalized_retrieval_goal)
         object.__setattr__(self, "focus", normalized_focus)
         object.__setattr__(self, "answer_plan", normalized_answer_plan)
+        object.__setattr__(self, "resolved_entities", normalized_resolved_entities)
         object.__setattr__(self, "planner_reason", normalized_planner_reason)
         object.__setattr__(self, "planner_source", normalized_planner_source)
         object.__setattr__(self, "rewritten_query", normalized_rewritten_query)
@@ -244,6 +249,7 @@ class AgentState:
         retrieval_goal: str | None,
         focus: str | None,
         answer_plan: dict[str, Any] | None,
+        resolved_entities: tuple[str, ...] = (),
         planner_reason: str,
         planner_source: str,
     ) -> "AgentState":
@@ -261,6 +267,7 @@ class AgentState:
             retrieval_goal=retrieval_goal or self.retrieval_goal,
             focus=focus or self.focus,
             answer_plan=answer_plan or self.answer_plan,
+            resolved_entities=resolved_entities or self.resolved_entities,
             planner_reason=planner_reason,
             planner_source=planner_source,
         )
@@ -464,6 +471,7 @@ class AgentState:
             "retrieval_goal": self.retrieval_goal,
             "focus": self.focus,
             "answer_plan": self.answer_plan,
+            "resolved_entities": list(self.resolved_entities),
             "planner_reason": self.planner_reason,
             "planner_source": self.planner_source,
             "rewritten_query": self.rewritten_query,

@@ -76,6 +76,7 @@ def planner_node(
         retrieval_goal=state.retrieval_goal,
         focus=state.focus,
         answer_plan=state.answer_plan,
+        resolved_entities=state.resolved_entities,
         planner_reason=decision.reason,
         planner_source="llm",
     )
@@ -118,6 +119,7 @@ def fallback_planner_node(
         retrieval_goal=routed_state.retrieval_goal,
         focus=routed_state.focus,
         answer_plan=routed_state.answer_plan,
+        resolved_entities=routed_state.resolved_entities,
         planner_reason="当前未启用 LLM planner，使用规则路由结果作为兜底规划。",
         planner_source="rule",
     )
@@ -216,6 +218,7 @@ def resolve_first_class_planning_from_context(state: AgentState) -> AgentState:
         retrieval_goal=state.retrieval_goal,
         focus=state.focus,
         answer_plan=state.answer_plan,
+        resolved_entities=state.resolved_entities,
         planner_reason="优先采用 context resolver 的结构化理解结果，planner 仅补执行默认值。",
         planner_source="resolver",
     )
@@ -275,6 +278,7 @@ def strategy_node(state: AgentState) -> AgentState:
         user_query=state.query.user_query,
         retrieval_output=state.tool_output,
         retrieval_goal=state.retrieval_goal,
+        resolved_entities=state.resolved_entities,
     )
     return state.with_strategy_result(
         strategy=decision.strategy,

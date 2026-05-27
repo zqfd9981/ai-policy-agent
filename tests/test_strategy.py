@@ -12,8 +12,10 @@ from app.agent.strategy import (
 )
 from app.agent.state import AgentState
 from app.models.query import AgentQuery
+from app.models.metadata import PolicyMetadata
 from app.retrieval.retriever import RetrievalResult
 from app.tools.retrieve_policy import RetrievePolicyOutput, RetrievedPolicyChunk
+from app.tools.compare_policy import score_metadata_candidate
 
 
 def build_result(
@@ -56,6 +58,41 @@ def build_output(results: list[RetrievalResult]) -> RetrievePolicyOutput:
 
 
 class StrategyTests(unittest.TestCase):
+    def test_region_compare_prefers_broader_core_policy_over_narrow_topic_policy(self) -> None:
+        broad = PolicyMetadata(
+            doc_id="BJ001",
+            title="北京市推动“人工智能+”行动计划（2024-2025年）",
+            region="北京",
+            level="市级",
+            issuer="北京市发展和改革委员会等",
+            publish_date="2024/7/26",
+            policy_type="行动计划",
+            theme="人工智能+应用",
+            tier="core",
+            status="official_text",
+            source_format="txt",
+            notes="北京AI应用总纲",
+        )
+        narrow = PolicyMetadata(
+            doc_id="BJ003",
+            title="北京市加快人工智能赋能科学研究高质量发展行动计划（2025—2027年）",
+            region="北京",
+            level="市级",
+            issuer="北京市相关主管部门",
+            publish_date="2025/7/22",
+            policy_type="行动计划",
+            theme="AI+Science",
+            tier="supplement",
+            status="official_text",
+            source_format="txt",
+            notes="偏AI+Science专题",
+        )
+
+        broad_score = score_metadata_candidate("比较北京和上海的AI政策", broad)
+        narrow_score = score_metadata_candidate("比较北京和上海的AI政策", narrow)
+
+        self.assertGreater(broad_score, narrow_score)
+
     def test_aggregate_retrieval_documents_groups_by_doc(self) -> None:
         output = build_output(
             [
@@ -138,6 +175,26 @@ class StrategyTests(unittest.TestCase):
             user_query="北京和上海哪个更适合",
             retrieval_output=output,
             retrieval_goal="compare_regions",
+            resolved_entities=("北京", "上海"),
+        )
+
+        self.assertEqual(decision.strategy, STRATEGY_COMPARE)
+        self.assertEqual(decision.route, ROUTE_COMPARE)
+
+    def test_region_compare_prefers_resolved_entities_even_if_retrieval_is_single_sided(self) -> None:
+        output = build_output(
+            [
+                build_result(rank=1, score=0.92, chunk_id="SH002_0001", doc_id="SH002", title="上海应用支持"),
+                build_result(rank=2, score=0.90, chunk_id="SH002_0002", doc_id="SH002", title="上海应用支持"),
+            ]
+        )
+
+        decision = choose_retrieval_strategy(
+            intent="compare",
+            user_query="北京和上海哪个更适合",
+            retrieval_output=output,
+            retrieval_goal="compare_regions",
+            resolved_entities=("上海", "北京"),
         )
 
         self.assertEqual(decision.strategy, STRATEGY_COMPARE)

@@ -151,6 +151,9 @@ def build_answer_context(
 
     if isinstance(tool_output, PolicyCompareOutput):
         citations = tuple(dict(item) for item in tool_output.all_citations)
+        left_evidence_count, right_evidence_count, sparse_sides = summarize_compare_evidence_health(
+            tool_output
+        )
         lines = [
             f"用户问题：{user_query}",
             f"任务类型：{intent or 'compare'}",
@@ -158,6 +161,13 @@ def build_answer_context(
             f"对比对象A：{tool_output.left_summary.title} ({tool_output.left_summary.doc_id})",
             f"对比对象B：{tool_output.right_summary.title} ({tool_output.right_summary.doc_id})",
             f"定位依据：{tool_output.selection_reason}",
+            f"A侧有效要点数：{left_evidence_count}",
+            f"B侧有效要点数：{right_evidence_count}",
+            (
+                f"证据提醒：{', '.join(sparse_sides)} 证据偏弱，回答时需要更保守。"
+                if sparse_sides
+                else "证据提醒：当前两侧都有一定可用证据。"
+            ),
             "",
             "结构化对比草稿：",
             render_policy_comparison(tool_output),
@@ -200,6 +210,9 @@ def build_answer_prompt(
                 "- 先直接回答：什么场景更适合北京，什么场景更适合上海/另一方。",
                 "- 不要再按“政策概览 / 支持重点 / 适用对象 / 申报条件”四段模板展开。",
                 "- 输出风格更像顾问建议：先结论，再场景例子，再给出简短原因。",
+                "- 所有判断都必须能被当前证据支撑，不允许写“根据地区特点推测”这类超出证据的话。",
+                "- 如果某一方证据明显更弱，请明确说“当前证据更支持……，对另一方需谨慎判断”。",
+                "- 除非证据非常充分，不要给绝对的 1/2/3 排名，也不要下过强结论。",
             ]
         )
         if "core_differences" in must_cover or difference_first:
@@ -249,6 +262,23 @@ def is_scenario_compare_query(query: str) -> bool:
         "具体场景",
     )
     return any(keyword in query for keyword in scenario_keywords)
+
+
+def summarize_compare_evidence_health(
+    output: PolicyCompareOutput,
+) -> tuple[int, int, tuple[str, ...]]:
+    """Estimate whether one side of a compare has materially weaker evidence."""
+
+    left_count = sum(len(section.left_points) for section in output.sections)
+    right_count = sum(len(section.right_points) for section in output.sections)
+    sparse_sides: list[str] = []
+
+    if left_count == 0 or left_count <= max(1, right_count // 3):
+        sparse_sides.append("A侧")
+    if right_count == 0 or right_count <= max(1, left_count // 3):
+        sparse_sides.append("B侧")
+
+    return left_count, right_count, tuple(sparse_sides)
 
 
 def fallback_answer(

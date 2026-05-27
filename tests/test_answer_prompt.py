@@ -39,6 +39,8 @@ class AnswerPromptTests(unittest.TestCase):
         self.assertIn("当前特别关注的比较焦点：location_choice", prompt)
         self.assertIn("必须先概括双方核心差异，再给场景建议", prompt)
         self.assertIn("必须给出明确建议", prompt)
+        self.assertIn("不允许写“根据地区特点推测”", prompt)
+        self.assertIn("不要给绝对的 1/2/3 排名", prompt)
 
 
 if __name__ == "__main__":

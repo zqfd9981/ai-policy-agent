@@ -14,11 +14,11 @@
 
 ## 当前架构
 
-当前主链路已经从“前置硬路由”重构成“统一先检索，再按证据分流”。
+当前主链路已经从“前置硬路由”重构成“resolver 主理解 + 统一先检索，再按证据分流”。
 
 ```text
 用户问题
--> planner
+-> context resolver
 -> rewrite
 -> retrieve
 -> strategy selector
@@ -34,14 +34,20 @@
 
 几个关键概念：
 
-- `intent`
-  代表用户想做什么，例如问答、摘要、对比
+- `resolved_action`
+  代表 resolver 对当前轮任务的主理解，例如 retrieve / summarize / compare
 
 - `route`
   代表当前这一跳先执行什么，当前首跳统一为 `retrieve`
 
 - `strategy`
   代表检索完成后，系统最终选择哪种处理方案
+
+- `response_mode`
+  代表最终回答组织方式，例如普通对比或场景化建议
+
+- `retrieval_goal`
+  代表这一轮检索真正想召回什么对象，例如单篇政策、地区多政策、地区比较等
 
 ## 四种策略
 
@@ -106,9 +112,14 @@ outputs/        chunk、检索索引等产物
 `AgentState` 是整条链路的共享容器，重点字段包括：
 
 - `query`
+- `resolved_action`
 - `intent`
 - `route`
 - `strategy`
+- `response_mode`
+- `retrieval_goal`
+- `focus`
+- `answer_plan`
 - `rewritten_query`
 - `retrieval_output`
 - `tool_output`
@@ -232,7 +243,7 @@ python app\main.py 总结一下上海的AI政策 --json
 
 - 输入问题
 - 查看最终回答
-- 查看 `intent / route / strategy / judge / next_step`
+- 查看 `resolved_action / response_mode / retrieval_goal / focus / route / strategy / judge / next_step`
 - 查看完整状态 JSON
 
 服务端入口：
@@ -295,6 +306,29 @@ python -m unittest discover -s tests -p "test_*.py" -v
 - 检索后策略选择
 - graph 主链路四种主要分支
 - 单篇摘要规则抽取的关键行为
+
+## 评测
+
+项目提供了最小可用评测集与评测脚本：
+
+- [cases.json](c:/D/Agent-learn/MyProject/app/eval/cases.json)
+- [run_eval.py](c:/D/Agent-learn/MyProject/app/eval/run_eval.py)
+
+运行全部评测：
+
+```powershell
+python app/eval/run_eval.py
+```
+
+只抽样运行部分 case：
+
+```powershell
+python app/eval/run_eval.py --case-ids compare_bj_sh_model scenario_compare_bj_sh
+```
+
+评测报告输出到：
+
+- [eval_report.json](c:/D/Agent-learn/MyProject/outputs/eval_report.json)
 
 ## 依赖
 

@@ -183,6 +183,25 @@ def print_summary(report: list[dict[str, Any]]) -> None:
             print(
                 f"  - {marker} {check['field']}: expected={check['expected']} actual={check['actual']}"
             )
+        result = item["result"]
+        final_response = result.get("final_response", {})
+        context_resolution = result.get("context_resolution", {})
+        if context_resolution:
+            print("  - context_resolution:")
+            print(
+                f"    * source={context_resolution.get('source')} "
+                f"resolved_action={context_resolution.get('resolved_action')} "
+                f"response_mode={context_resolution.get('response_mode')} "
+                f"retrieval_goal={context_resolution.get('retrieval_goal')} "
+                f"focus={context_resolution.get('focus')}"
+            )
+            print(
+                f"    * resolved_entities={context_resolution.get('resolved_entities')}"
+            )
+        if final_response:
+            print("  - final_response preview:")
+            preview = str(final_response.get("message", "")).replace("\n", " ").strip()
+            print(f"    * {preview[:180]}{'…' if len(preview) > 180 else ''}")
         if item["manual_checks"]:
             print("  - manual_checks:")
             for text in item["manual_checks"]:
