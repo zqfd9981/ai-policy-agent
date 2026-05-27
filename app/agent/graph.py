@@ -195,6 +195,11 @@ def build_initial_state(
     *,
     top_k: int = DEFAULT_QUERY_TOP_K,
     max_retries: int = 1,
+    resolved_action: str | None = None,
+    response_mode: str | None = None,
+    retrieval_goal: str | None = None,
+    focus: str | None = None,
+    answer_plan: dict[str, object] | None = None,
 ) -> AgentState:
     """构建工作流的初始状态。"""
 
@@ -202,6 +207,11 @@ def build_initial_state(
     return AgentState(
         query=normalized_query,
         max_retries=max_retries,
+        resolved_action=resolved_action,
+        response_mode=response_mode,
+        retrieval_goal=retrieval_goal,
+        focus=focus,
+        answer_plan=answer_plan,
     )
 
 
@@ -210,6 +220,11 @@ def run_agent_workflow(
     *,
     top_k: int = DEFAULT_QUERY_TOP_K,
     max_retries: int = 1,
+    resolved_action: str | None = None,
+    response_mode: str | None = None,
+    retrieval_goal: str | None = None,
+    focus: str | None = None,
+    answer_plan: dict[str, object] | None = None,
     planner: PolicyAgentPlanner | None = None,
     rewriter: PolicyAgentRewriter | None = None,
     answerer: PolicyAgentAnswerer | None = None,
@@ -237,7 +252,51 @@ def run_agent_workflow(
         compare_tool=compare_tool,
         supported_routes=cast(frozenset[str], supported_routes),
     )
-    return graph.run(query, top_k=top_k, max_retries=max_retries)
+    normalized_query = query if isinstance(query, AgentQuery) else AgentQuery(query, top_k=top_k)
+    initial_state = build_initial_state(
+        normalized_query,
+        top_k=top_k,
+        max_retries=max_retries,
+        resolved_action=resolved_action,
+        response_mode=response_mode,
+        retrieval_goal=retrieval_goal,
+        focus=focus,
+        answer_plan=answer_plan,
+    )
+    planned_state = planner_node(
+        initial_state,
+        planner=planner,
+        supported_routes=cast(frozenset[str], supported_routes),
+    )
+    rewritten_state = rewrite_node(
+        planned_state,
+        rewriter=rewriter,
+    )
+    first_pass_state = graph.run_execution_cycle(rewritten_state)
+
+    repaired_state = repair_node(
+        first_pass_state,
+        repairer=repairer,
+    )
+    current_state = (
+        repaired_state
+        if repaired_state.retry_count == first_pass_state.retry_count
+        else graph.run_execution_cycle(repaired_state)
+    )
+
+    final_state = next_step_node(
+        current_state,
+        planner=next_step_planner,
+    )
+
+    if final_state.route_switch_count > current_state.route_switch_count:
+        switched_state = graph.run_execution_cycle(final_state)
+        return next_step_node(
+            switched_state,
+            planner=next_step_planner,
+        )
+
+    return final_state
 
 
 def run_agent_query(

@@ -11,22 +11,81 @@ from app.memory.session import SessionMemory, WorkingMemory
 
 MEMORY_COMPLETION_SYSTEM_PROMPT = """
 你是 Policy Agent 的多轮上下文补全器。
-你的职责不是回答问题，而是结合当前用户短追问和会话上下文，把它补全成一个完整、明确、适合后续 planner / rewrite 使用的问题。
+你的职责不是回答问题，而是结合当前用户问题和会话上下文，做“语义理解 + 指代消解 + 回答模式判断”，并把结果补全成一个完整、明确、适合后续 planner / rewrite 使用的问题。
 
 输出要求：
 1. 只输出结构化 JSON。
-2. 如果当前 query 已经完整，就原样返回。
+2. 如果当前 query 已经完整，就原样返回，但也要给出合理的 response_mode / retrieval_goal / focus。
 3. 不要编造不存在的政策名称或地区。
 4. 优先结合 working memory 里的地区、主题、当前策略、候选政策标题、compare 对象。
+5. 如果用户说“它们 / 这几个 / 前两个”，优先理解为引用最近的比较对象组。
+6. 你的判断依据应当是语义，而不是依赖固定关键词。
+7. 如果是比较型问题，还要判断回答方式：
+   - policy_overview_compare：普通政策差异/横向对比
+   - scenario_advice_compare：用户想知道“哪个好/更适合/什么场景下选谁”
+
+字段说明：
+- resolved_action: retrieve / summarize / compare / chat
+- response_mode:
+  - direct_answer
+  - structured_summary
+  - policy_overview_compare
+  - scenario_advice_compare
+- retrieval_goal:
+  - single_policy
+  - multi_policy_region
+  - multi_policy_topic
+  - compare_regions
+  - compare_regions_multi
+  - compare_policies
+- focus: funding / research / industrial_landing / policy_difference / location_choice / support_points / application_conditions 等
+
+示例1：
+最近问过上海AI政策，又问北京AI政策；当前问题是“这两个地方的政策有什么差异？哪个地方更好？”
+则应解析为：
+- resolved_action=compare
+- response_mode=scenario_advice_compare
+- retrieval_goal=compare_regions
+- focus=location_choice
+
+示例2：
+最近问过上海和北京；当前问题是“安徽和它们比又怎么样”
+则应把安徽并入已有比较组，而不是退化成安徽内部政策比较。
 """.strip()
 
 
 class ContextCompletionModel(BaseModel):
+    class AnswerPlanModel(BaseModel):
+        must_cover: list[str] = Field(default_factory=list)
+        need_examples: bool = False
+        need_recommendation: bool = False
+        difference_first: bool = False
+
     contextualized_query: str = Field(description="补全后的完整 query")
     reason: str = Field(description="一句中文说明为什么这样补全")
     resolved_action: str | None = Field(
         default=None,
         description="可选：retrieve / summarize / compare",
+    )
+    response_mode: str | None = Field(
+        default=None,
+        description="可选：direct_answer / structured_summary / policy_overview_compare / scenario_advice_compare",
+    )
+    retrieval_goal: str | None = Field(
+        default=None,
+        description="可选：single_policy / multi_policy_region / multi_policy_topic / compare_regions / compare_policies",
+    )
+    focus: str | None = Field(
+        default=None,
+        description="可选：funding / research / industrial_landing / policy_difference / location_choice 等",
+    )
+    answer_plan: AnswerPlanModel | None = Field(
+        default=None,
+        description=(
+            "回答计划。must_cover 可包含 core_differences / scenario_recommendation / "
+            "policy_overview；need_examples 表示是否需要举例；need_recommendation 表示是否需要明确给建议；"
+            "difference_first 表示是否应先讲差异再给建议。"
+        ),
     )
     resolved_entities: list[str] = Field(
         default_factory=list,
@@ -40,6 +99,10 @@ class ContextCompletionDecision:
     reason: str
     source: str
     resolved_action: str | None = None
+    response_mode: str | None = None
+    retrieval_goal: str | None = None
+    focus: str | None = None
+    answer_plan: dict[str, object] | None = None
     resolved_entities: tuple[str, ...] = ()
 
 
@@ -79,6 +142,14 @@ class MemoryContextCompleter:
             reason=parsed.reason.strip(),
             source="llm",
             resolved_action=(parsed.resolved_action.strip().lower() if parsed.resolved_action else None),
+            response_mode=(parsed.response_mode.strip().lower() if parsed.response_mode else None),
+            retrieval_goal=(parsed.retrieval_goal.strip().lower() if parsed.retrieval_goal else None),
+            focus=(parsed.focus.strip().lower() if parsed.focus else None),
+            answer_plan=(
+                parsed.answer_plan.model_dump()
+                if parsed.answer_plan is not None
+                else None
+            ),
             resolved_entities=tuple(item.strip() for item in parsed.resolved_entities if item.strip()),
         )
 
@@ -119,12 +190,7 @@ def resolve_context_query(
             pass
 
     working_memory = session_memory.working_memory
-    decision = (
-        complete_region_switch_query(normalized_query, working_memory)
-        or complete_group_compare_query(normalized_query, working_memory)
-        or complete_focus_dimension_query(normalized_query, working_memory)
-        or complete_candidate_reference_query(normalized_query, working_memory)
-    )
+    decision = fallback_rule_context_query(normalized_query, working_memory)
     if decision:
         return decision
 
@@ -132,6 +198,20 @@ def resolve_context_query(
         contextualized_query=normalized_query,
         reason="未使用有效上下文补全，保留原始 query。",
         source="none",
+    )
+
+
+def fallback_rule_context_query(
+    query: str,
+    working_memory: WorkingMemory,
+) -> ContextCompletionDecision | None:
+    """Cheap fallback only for environments where no LLM resolver is available."""
+
+    return (
+        complete_region_switch_query(query, working_memory)
+        or complete_group_compare_query(query, working_memory)
+        or complete_focus_dimension_query(query, working_memory)
+        or complete_candidate_reference_query(query, working_memory)
     )
 
 
@@ -177,6 +257,14 @@ def complete_region_switch_query(
             reason="识别为地区切换式追问，延续上一轮多文档摘要主题。",
             source="rule",
             resolved_action="summarize",
+            response_mode="structured_summary",
+            retrieval_goal="multi_policy_region",
+            answer_plan={
+                "must_cover": ["policy_overview"],
+                "need_examples": False,
+                "need_recommendation": False,
+                "difference_first": False,
+            },
             resolved_entities=(target_region,),
         )
 
@@ -185,6 +273,13 @@ def complete_region_switch_query(
             contextualized_query=f"{target_region}{working_memory.active_topic}",
             reason="识别为地区切换式追问，延续上一轮主题。",
             source="rule",
+            retrieval_goal="multi_policy_topic",
+            answer_plan={
+                "must_cover": ["policy_overview"],
+                "need_examples": False,
+                "need_recommendation": False,
+                "difference_first": False,
+            },
             resolved_entities=(target_region,),
         )
     return None
@@ -206,6 +301,10 @@ def complete_group_compare_query(
         "区别",
         "对比",
         "比较",
+        "和它们比",
+        "和前两个比",
+        "和这几个比",
+        "相比",
         "哪个更好",
         "更好",
         "优劣",
@@ -219,11 +318,9 @@ def complete_group_compare_query(
     if not any(keyword in query for keyword in comparison_keywords):
         return None
 
-    explicit_regions = [
-        region
-        for region in ("上海", "北京", "江苏", "浙江", "深圳", "广东", "长三角")
-        if region in query
-    ]
+    region_terms = ("上海", "北京", "江苏", "浙江", "深圳", "广东", "长三角", "安徽", "杭州", "苏州")
+    explicit_regions = [region for region in region_terms if region in query]
+    mentions_group_reference = any(token in query for token in ("它们", "这几个", "前两个", "前两个地方", "这两个地方"))
 
     region_entities = [
         entity.label
@@ -235,7 +332,13 @@ def complete_group_compare_query(
         if item not in unique_regions:
             unique_regions.append(item)
 
-    if explicit_regions:
+    candidate_regions: list[str]
+    if working_memory.active_comparison and working_memory.active_comparison.kind == "region" and mentions_group_reference:
+        candidate_regions = list(working_memory.active_comparison.members)
+        for item in explicit_regions:
+            if item not in candidate_regions:
+                candidate_regions.append(item)
+    elif explicit_regions:
         ordered_regions: list[str] = []
         for item in explicit_regions:
             if item not in ordered_regions:
@@ -247,13 +350,41 @@ def complete_group_compare_query(
     if len(candidate_regions) < 2:
         return None
 
-    left_region, right_region = candidate_regions[-2], candidate_regions[-1]
     topic = working_memory.active_topic or "AI政策"
+    if len(candidate_regions) > 2:
+        joined_regions = "、".join(candidate_regions)
+        return ContextCompletionDecision(
+            contextualized_query=f"比较{joined_regions}的{topic}，它们分别适合什么场景，各有什么差异",
+            reason="识别到已有比较对象组，并将新地区并入同一组做多对象比较。",
+            source="rule",
+            resolved_action="compare",
+            response_mode="scenario_advice_compare",
+            retrieval_goal="compare_regions_multi",
+            focus="location_choice",
+            answer_plan={
+                "must_cover": ["core_differences", "scenario_recommendation"],
+                "need_examples": True,
+                "need_recommendation": True,
+                "difference_first": True,
+            },
+            resolved_entities=tuple(candidate_regions),
+        )
+
+    left_region, right_region = candidate_regions[-2], candidate_regions[-1]
     return ContextCompletionDecision(
         contextualized_query=f"比较{left_region}和{right_region}的{topic}，有什么差异，哪个地方更好",
         reason="识别到“这两个地方/哪个更好”等比较指代，使用最近两个地区实体补全 compare query。",
         source="rule",
         resolved_action="compare",
+        response_mode="scenario_advice_compare",
+        retrieval_goal="compare_regions",
+        focus="location_choice",
+        answer_plan={
+            "must_cover": ["core_differences", "scenario_recommendation"],
+            "need_examples": True,
+            "need_recommendation": True,
+            "difference_first": True,
+        },
         resolved_entities=(left_region, right_region),
     )
 
@@ -288,6 +419,15 @@ def complete_focus_dimension_query(
             reason="识别到维度延续追问，沿用上一轮 compare 对象。",
             source="rule",
             resolved_action="compare",
+            response_mode="policy_overview_compare",
+            retrieval_goal="compare_policies",
+            focus=focus_dimension,
+            answer_plan={
+                "must_cover": ["policy_overview"],
+                "need_examples": False,
+                "need_recommendation": False,
+                "difference_first": False,
+            },
             resolved_entities=(working_memory.left_doc_title, working_memory.right_doc_title),
         )
 
@@ -297,6 +437,15 @@ def complete_focus_dimension_query(
             reason="识别到维度延续追问，沿用当前单篇政策对象。",
             source="rule",
             resolved_action="summarize",
+            response_mode="structured_summary",
+            retrieval_goal="single_policy",
+            focus=focus_dimension,
+            answer_plan={
+                "must_cover": [focus_dimension],
+                "need_examples": False,
+                "need_recommendation": False,
+                "difference_first": False,
+            },
             resolved_entities=(working_memory.active_doc_title,),
         )
 
@@ -308,6 +457,15 @@ def complete_focus_dimension_query(
             reason="识别到维度延续追问，沿用当前地区与主题摘要上下文。",
             source="rule",
             resolved_action="summarize",
+            response_mode="structured_summary",
+            retrieval_goal="multi_policy_region",
+            focus=focus_dimension,
+            answer_plan={
+                "must_cover": [focus_dimension],
+                "need_examples": False,
+                "need_recommendation": False,
+                "difference_first": False,
+            },
             resolved_entities=(working_memory.active_region,),
         )
 
@@ -341,5 +499,13 @@ def complete_candidate_reference_query(
         reason="识别到按序号引用候选政策，自动下钻到对应单篇政策。",
         source="rule",
         resolved_action="summarize",
+        response_mode="structured_summary",
+        retrieval_goal="single_policy",
+        answer_plan={
+            "must_cover": ["policy_overview"],
+            "need_examples": False,
+            "need_recommendation": False,
+            "difference_first": False,
+        },
         resolved_entities=(target_title,),
     )

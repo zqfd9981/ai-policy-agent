@@ -60,9 +60,16 @@ def render_state(state: AgentState) -> str:
     lines = [
         f"success: {response.success}",
         f"route: {response.route}",
+        f"resolved_action: {state.resolved_action or 'unknown'}",
         f"intent: {state.intent or 'unknown'}",
         f"planner_source: {state.planner_source or 'unknown'}",
     ]
+    if state.response_mode:
+        lines.append(f"response_mode: {state.response_mode}")
+    if state.retrieval_goal:
+        lines.append(f"retrieval_goal: {state.retrieval_goal}")
+    if state.focus:
+        lines.append(f"focus: {state.focus}")
     if state.needs_rag is not None:
         lines.append(f"needs_rag: {state.needs_rag}")
     if state.needs_rewrite is not None:

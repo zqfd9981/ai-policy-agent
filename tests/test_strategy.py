@@ -125,6 +125,43 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(decision.strategy, STRATEGY_COMPARE)
         self.assertEqual(decision.route, ROUTE_COMPARE)
 
+    def test_retrieval_goal_can_drive_compare_without_relying_on_query_keywords(self) -> None:
+        output = build_output(
+            [
+                build_result(rank=1, score=0.92, chunk_id="BJ001_0001", doc_id="BJ001", title="北京大模型措施"),
+                build_result(rank=2, score=0.90, chunk_id="SH001_0001", doc_id="SH001", title="上海模塑申城"),
+            ]
+        )
+
+        decision = choose_retrieval_strategy(
+            intent="retrieve",
+            user_query="北京和上海哪个更适合",
+            retrieval_output=output,
+            retrieval_goal="compare_regions",
+        )
+
+        self.assertEqual(decision.strategy, STRATEGY_COMPARE)
+        self.assertEqual(decision.route, ROUTE_COMPARE)
+
+    def test_retrieval_goal_can_drive_multi_doc_summary_without_keywords(self) -> None:
+        output = build_output(
+            [
+                build_result(rank=1, score=0.89, chunk_id="SH001_0001", doc_id="SH001", title="模塑申城"),
+                build_result(rank=2, score=0.86, chunk_id="SH002_0001", doc_id="SH002", title="扩大应用若干措施"),
+                build_result(rank=3, score=0.84, chunk_id="SH003_0001", doc_id="SH003", title="AI+制造实施方案"),
+            ]
+        )
+
+        decision = choose_retrieval_strategy(
+            intent="retrieve",
+            user_query="上海AI政策",
+            retrieval_output=output,
+            retrieval_goal="multi_policy_region",
+        )
+
+        self.assertEqual(decision.strategy, STRATEGY_MULTI_DOC_SUMMARY)
+        self.assertEqual(decision.route, ROUTE_SUMMARIZE)
+
     def test_strategy_result_does_not_override_rewritten_query(self) -> None:
         state = AgentState(
             query=AgentQuery("总结一下上海的AI政策"),

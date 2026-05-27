@@ -73,9 +73,17 @@ def update_session_memory(
             working_memory.right_doc_id = tool_output.right_summary.doc_id
             working_memory.right_doc_title = tool_output.right_summary.title
             working_memory.summary_scope = "compare"
+            left_region = str(tool_output.left_summary.metadata.get("region", "")).strip()
+            right_region = str(tool_output.right_summary.metadata.get("region", "")).strip()
+            comparison_kind = "region" if left_region and right_region and left_region != right_region else "policy"
+            comparison_members = (
+                (left_region, right_region)
+                if comparison_kind == "region"
+                else (tool_output.left_summary.title, tool_output.right_summary.title)
+            )
             working_memory.active_comparison = ComparisonMemory(
-                kind="policy",
-                members=(tool_output.left_summary.title, tool_output.right_summary.title),
+                kind=comparison_kind,
+                members=comparison_members,
                 topic=working_memory.active_topic,
             )
 

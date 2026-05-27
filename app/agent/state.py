@@ -32,9 +32,14 @@ class AgentState:
     query: AgentQuery
     route: str | None = None
     intent: str | None = None
+    resolved_action: str | None = None
     needs_rag: bool | None = None
     needs_rewrite: bool | None = None
     answer_style: str | None = None
+    response_mode: str | None = None
+    retrieval_goal: str | None = None
+    focus: str | None = None
+    answer_plan: dict[str, Any] | None = None
     planner_reason: str | None = None
     planner_source: str | None = None
     rewritten_query: str | None = None
@@ -77,7 +82,12 @@ class AgentState:
 
         normalized_route = self.route.strip().lower() if self.route else None
         normalized_intent = self.intent.strip().lower() if self.intent else None
+        normalized_resolved_action = self.resolved_action.strip().lower() if self.resolved_action else None
         normalized_answer_style = self.answer_style.strip().lower() if self.answer_style else None
+        normalized_response_mode = self.response_mode.strip().lower() if self.response_mode else None
+        normalized_retrieval_goal = self.retrieval_goal.strip().lower() if self.retrieval_goal else None
+        normalized_focus = self.focus.strip().lower() if self.focus else None
+        normalized_answer_plan = dict(self.answer_plan) if self.answer_plan is not None else None
         normalized_planner_reason = self.planner_reason.strip() if self.planner_reason else None
         normalized_planner_source = self.planner_source.strip().lower() if self.planner_source else None
         normalized_rewritten_query = self.rewritten_query.strip() if self.rewritten_query else None
@@ -132,7 +142,12 @@ class AgentState:
 
         object.__setattr__(self, "route", normalized_route)
         object.__setattr__(self, "intent", normalized_intent)
+        object.__setattr__(self, "resolved_action", normalized_resolved_action)
         object.__setattr__(self, "answer_style", normalized_answer_style)
+        object.__setattr__(self, "response_mode", normalized_response_mode)
+        object.__setattr__(self, "retrieval_goal", normalized_retrieval_goal)
+        object.__setattr__(self, "focus", normalized_focus)
+        object.__setattr__(self, "answer_plan", normalized_answer_plan)
         object.__setattr__(self, "planner_reason", normalized_planner_reason)
         object.__setattr__(self, "planner_source", normalized_planner_source)
         object.__setattr__(self, "rewritten_query", normalized_rewritten_query)
@@ -221,9 +236,14 @@ class AgentState:
         *,
         intent: str,
         route: str,
+        resolved_action: str | None,
         needs_rag: bool,
         needs_rewrite: bool,
         answer_style: str,
+        response_mode: str | None,
+        retrieval_goal: str | None,
+        focus: str | None,
+        answer_plan: dict[str, Any] | None,
         planner_reason: str,
         planner_source: str,
     ) -> "AgentState":
@@ -233,9 +253,14 @@ class AgentState:
             self,
             intent=intent,
             route=route,
+            resolved_action=resolved_action or self.resolved_action,
             needs_rag=needs_rag,
             needs_rewrite=needs_rewrite,
             answer_style=answer_style,
+            response_mode=response_mode or self.response_mode,
+            retrieval_goal=retrieval_goal or self.retrieval_goal,
+            focus=focus or self.focus,
+            answer_plan=answer_plan or self.answer_plan,
             planner_reason=planner_reason,
             planner_source=planner_source,
         )
@@ -431,9 +456,14 @@ class AgentState:
             "query": self.query.to_dict(),
             "route": self.route,
             "intent": self.intent,
+            "resolved_action": self.resolved_action,
             "needs_rag": self.needs_rag,
             "needs_rewrite": self.needs_rewrite,
             "answer_style": self.answer_style,
+            "response_mode": self.response_mode,
+            "retrieval_goal": self.retrieval_goal,
+            "focus": self.focus,
+            "answer_plan": self.answer_plan,
             "planner_reason": self.planner_reason,
             "planner_source": self.planner_source,
             "rewritten_query": self.rewritten_query,

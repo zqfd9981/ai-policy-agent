@@ -86,6 +86,7 @@ def choose_retrieval_strategy(
     intent: str | None,
     user_query: str,
     retrieval_output: RetrievePolicyOutput,
+    retrieval_goal: str | None = None,
 ) -> StrategyDecision:
     """
     Decide how to consume retrieved evidence.
@@ -93,7 +94,15 @@ def choose_retrieval_strategy(
     """
 
     normalized_intent = (intent or ROUTE_RETRIEVE).strip().lower()
+    normalized_retrieval_goal = (retrieval_goal or "").strip().lower()
     candidates = aggregate_retrieval_documents(retrieval_output)
+
+    if normalized_retrieval_goal in {"compare_regions", "compare_regions_multi", "compare_policies"} and len(candidates) >= 2:
+        return StrategyDecision(
+            strategy=STRATEGY_COMPARE,
+            route=ROUTE_COMPARE,
+            reason="resolver 已明确当前检索目标是 compare，且检索结果中存在可比较对象。",
+        )
 
     if normalized_intent == ROUTE_COMPARE and len(candidates) >= 2:
         return StrategyDecision(
@@ -101,6 +110,23 @@ def choose_retrieval_strategy(
             route=ROUTE_COMPARE,
             reason="用户问题是对比型请求，且检索结果中已存在至少两篇可比较政策。",
         )
+
+    if normalized_retrieval_goal == "single_policy":
+        top_candidate = candidates[0] if candidates else None
+        if top_candidate is not None:
+            return StrategyDecision(
+                strategy=STRATEGY_SINGLE_DOC_SUMMARY,
+                route=ROUTE_SUMMARIZE,
+                reason=f"resolver 已明确当前检索目标是单篇政策摘要，转为单篇摘要：{top_candidate.title}。",
+            )
+
+    if normalized_retrieval_goal in {"multi_policy_region", "multi_policy_topic"}:
+        if len(candidates) >= 2:
+            return StrategyDecision(
+                strategy=STRATEGY_MULTI_DOC_SUMMARY,
+                route=ROUTE_SUMMARIZE,
+                reason="resolver 已明确当前检索目标是多政策汇总，且检索结果支持多文档摘要。",
+            )
 
     if normalized_intent == ROUTE_SUMMARIZE:
         if should_use_multi_doc_summary(

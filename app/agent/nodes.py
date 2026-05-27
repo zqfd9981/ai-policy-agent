@@ -43,6 +43,9 @@ def planner_node(
     - 无论来源如何，都把统一形状的规划结果写回 state
     """
 
+    if state.resolved_action in {ROUTE_RETRIEVE, ROUTE_SUMMARIZE, ROUTE_COMPARE, "match", "chat"}:
+        return resolve_first_class_planning_from_context(state)
+
     active_planner = planner or PolicyAgentPlanner()
     if not active_planner.is_available:
         return fallback_planner_node(
@@ -65,9 +68,14 @@ def planner_node(
     return state.with_planner_result(
         intent=decision.intent,
         route=route,
+        resolved_action=state.resolved_action or decision.intent,
         needs_rag=decision.needs_rag,
         needs_rewrite=decision.needs_rewrite,
         answer_style=decision.answer_style,
+        response_mode=state.response_mode,
+        retrieval_goal=state.retrieval_goal,
+        focus=state.focus,
+        answer_plan=state.answer_plan,
         planner_reason=decision.reason,
         planner_source="llm",
     )
@@ -102,9 +110,14 @@ def fallback_planner_node(
     return routed_state.with_planner_result(
         intent=detected_intent,
         route=routed_state.route or ROUTE_UNSUPPORTED,
+        resolved_action=routed_state.resolved_action or detected_intent,
         needs_rag=detected_intent != "chat",
         needs_rewrite=detected_intent in {ROUTE_RETRIEVE, ROUTE_SUMMARIZE, ROUTE_COMPARE},
         answer_style=answer_style,
+        response_mode=routed_state.response_mode,
+        retrieval_goal=routed_state.retrieval_goal,
+        focus=routed_state.focus,
+        answer_plan=routed_state.answer_plan,
         planner_reason="当前未启用 LLM planner，使用规则路由结果作为兜底规划。",
         planner_source="rule",
     )
@@ -172,6 +185,42 @@ def initial_route_for_intent(intent: str | None, *, needs_rag: bool) -> str:
     return ROUTE_UNSUPPORTED
 
 
+def resolve_first_class_planning_from_context(state: AgentState) -> AgentState:
+    """
+    Prefer resolver output as the primary understanding result.
+
+    Once context resolver has already produced a structured action and answer mode,
+    planner only needs to fill execution defaults instead of re-understanding the query.
+    """
+
+    resolved_action = state.resolved_action or ROUTE_RETRIEVE
+    needs_rag = resolved_action != "chat"
+    needs_rewrite = needs_rag
+    answer_style = (
+        "structured"
+        if resolved_action == ROUTE_SUMMARIZE
+        else "comparative"
+        if resolved_action == ROUTE_COMPARE
+        else "direct"
+    )
+    route = initial_route_for_intent(resolved_action, needs_rag=needs_rag)
+
+    return state.with_planner_result(
+        intent=resolved_action,
+        route=route,
+        resolved_action=resolved_action,
+        needs_rag=needs_rag,
+        needs_rewrite=needs_rewrite,
+        answer_style=answer_style,
+        response_mode=state.response_mode,
+        retrieval_goal=state.retrieval_goal,
+        focus=state.focus,
+        answer_plan=state.answer_plan,
+        planner_reason="优先采用 context resolver 的结构化理解结果，planner 仅补执行默认值。",
+        planner_source="resolver",
+    )
+
+
 def retrieve_node(
     state: AgentState,
     *,
@@ -225,6 +274,7 @@ def strategy_node(state: AgentState) -> AgentState:
         intent=state.intent,
         user_query=state.query.user_query,
         retrieval_output=state.tool_output,
+        retrieval_goal=state.retrieval_goal,
     )
     return state.with_strategy_result(
         strategy=decision.strategy,
@@ -372,6 +422,9 @@ def answer_node(
             user_query=state.query.user_query,
             intent=state.intent,
             answer_style=state.answer_style,
+            response_mode=state.response_mode,
+            focus=state.focus,
+            answer_plan=state.answer_plan,
             tool_output=state.tool_output,
         )
     except Exception:

@@ -178,6 +178,41 @@ class MemoryCompletionTests(unittest.TestCase):
             "比较上海和北京的AI政策，有什么差异，哪个地方更好",
         )
 
+    def test_group_compare_query_can_expand_existing_comparison_group(self) -> None:
+        from app.memory.session import ComparisonMemory
+
+        session_memory = SessionMemory(
+            session_id="demo-7",
+            working_memory=WorkingMemory(
+                active_topic="AI政策",
+                recent_entities=(
+                    MemoryEntity(kind="region", key="上海", label="上海"),
+                    MemoryEntity(kind="region", key="北京", label="北京"),
+                    MemoryEntity(kind="region", key="安徽", label="安徽"),
+                ),
+                active_comparison=ComparisonMemory(
+                    kind="region",
+                    members=("上海", "北京"),
+                    topic="AI政策",
+                ),
+            ),
+        )
+
+        decision = resolve_context_query(
+            "那安徽和它们比又怎么样",
+            session_memory=session_memory,
+            completer=None,
+        )
+
+        self.assertEqual(decision.source, "rule")
+        self.assertEqual(decision.resolved_action, "compare")
+        self.assertEqual(decision.retrieval_goal, "compare_regions_multi")
+        self.assertEqual(decision.resolved_entities, ("上海", "北京", "安徽"))
+        self.assertEqual(
+            decision.contextualized_query,
+            "比较上海、北京、安徽的AI政策，它们分别适合什么场景，各有什么差异",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

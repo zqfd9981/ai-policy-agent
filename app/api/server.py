@@ -45,7 +45,15 @@ def ask(request: AskRequest) -> dict[str, object]:
     contextualized_query = context_resolution.contextualized_query
 
     # Step 2: run the main agent workflow on the completed query.
-    state = run_agent_workflow(contextualized_query, top_k=request.top_k)
+    state = run_agent_workflow(
+        contextualized_query,
+        top_k=request.top_k,
+        resolved_action=context_resolution.resolved_action,
+        response_mode=context_resolution.response_mode,
+        retrieval_goal=context_resolution.retrieval_goal,
+        focus=context_resolution.focus,
+        answer_plan=context_resolution.answer_plan,
+    )
 
     # Step 3: persist the latest turn and distilled working memory.
     update_session_memory(
@@ -62,6 +70,10 @@ def ask(request: AskRequest) -> dict[str, object]:
         "reason": context_resolution.reason,
         "source": context_resolution.source,
         "resolved_action": context_resolution.resolved_action,
+        "response_mode": context_resolution.response_mode,
+        "retrieval_goal": context_resolution.retrieval_goal,
+        "focus": context_resolution.focus,
+        "answer_plan": context_resolution.answer_plan,
         "resolved_entities": list(context_resolution.resolved_entities),
     }
     payload["session_memory"] = session_memory.to_dict()

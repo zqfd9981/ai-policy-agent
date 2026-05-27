@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from app.agent.graph import PolicyAgentGraph
+from app.agent.graph import PolicyAgentGraph, build_initial_state
+from app.agent.nodes import planner_node
 from app.models.response import AgentResponse
 from app.retrieval.retriever import RetrievalResult
 from app.tools.compare_policy import PolicyCompareOutput, PolicyComparisonSection
@@ -204,6 +205,28 @@ class StubNextStepPlanner:
 
 
 class GraphFlowTests(unittest.TestCase):
+    def test_planner_prefers_resolver_structured_result(self) -> None:
+        state = build_initial_state(
+            "这两个地方哪个更好",
+            resolved_action="compare",
+            response_mode="scenario_advice_compare",
+            retrieval_goal="compare_regions",
+            focus="location_choice",
+        )
+
+        next_state = planner_node(
+            state,
+            planner=StubPlanner(intent="retrieve", needs_rag=False, needs_rewrite=False),
+            supported_routes=frozenset({"retrieve", "summarize", "compare"}),
+        )
+
+        self.assertEqual(next_state.intent, "compare")
+        self.assertEqual(next_state.resolved_action, "compare")
+        self.assertEqual(next_state.route, "retrieve")
+        self.assertEqual(next_state.response_mode, "scenario_advice_compare")
+        self.assertEqual(next_state.retrieval_goal, "compare_regions")
+        self.assertEqual(next_state.planner_source, "resolver")
+
     def test_direct_answer_flow_keeps_retrieval_output(self) -> None:
         retrieval_output = build_retrieval_output(
             [build_retrieval_result(rank=1, score=0.93, chunk_id="SH001_0001", doc_id="SH001", title="模塑申城")],

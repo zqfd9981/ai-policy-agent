@@ -59,6 +59,9 @@ class PolicyAgentAnswerer:
         user_query: str,
         intent: str | None,
         answer_style: str | None,
+        response_mode: str | None,
+        focus: str | None,
+        answer_plan: dict[str, Any] | None,
         tool_output: Any,
     ) -> AnswerDraft:
         """基于当前工具结果生成最终回答。"""
@@ -72,6 +75,9 @@ class PolicyAgentAnswerer:
             user_query=user_query,
             intent=intent,
             answer_style=answer_style,
+            response_mode=response_mode,
+            focus=focus,
+            answer_plan=answer_plan,
             context_text=context_text,
         )
         message = self.client.generate_text(
@@ -166,6 +172,9 @@ def build_answer_prompt(
     user_query: str,
     intent: str | None,
     answer_style: str | None,
+    response_mode: str | None,
+    focus: str | None,
+    answer_plan: dict[str, Any] | None,
     context_text: str,
 ) -> str:
     """构建给 LLM final answer 的用户提示词。"""
@@ -176,16 +185,40 @@ def build_answer_prompt(
         f"回答风格：{answer_style or 'direct'}",
     ]
 
-    if intent == "compare" and is_scenario_compare_query(user_query):
+    normalized_response_mode = (response_mode or "").strip().lower()
+    must_cover = list((answer_plan or {}).get("must_cover", []))
+    need_examples = bool((answer_plan or {}).get("need_examples", False))
+    need_recommendation = bool((answer_plan or {}).get("need_recommendation", False))
+    difference_first = bool((answer_plan or {}).get("difference_first", False))
+
+    if normalized_response_mode == "scenario_advice_compare":
         prompt_lines.extend(
             [
                 "",
                 "额外回答要求：",
                 "- 这轮不是普通政策综述，而是场景化比较建议。",
                 "- 先直接回答：什么场景更适合北京，什么场景更适合上海/另一方。",
-                "- 至少给出 2 到 4 个具体场景例子，例如科研平台、制造业落地、企业补贴申请、AI for Science、人才引进等。",
                 "- 不要再按“政策概览 / 支持重点 / 适用对象 / 申报条件”四段模板展开。",
                 "- 输出风格更像顾问建议：先结论，再场景例子，再给出简短原因。",
+            ]
+        )
+        if "core_differences" in must_cover or difference_first:
+            prompt_lines.append("- 必须先概括双方核心差异，再给场景建议，不要只回答“哪个更好”。")
+        if "scenario_recommendation" in must_cover or need_recommendation:
+            prompt_lines.append("- 必须给出明确建议：什么情况下选A，什么情况下选B。")
+        if need_examples:
+            prompt_lines.append("- 至少给出 2 到 4 个具体场景例子，例如科研平台、制造业落地、企业补贴申请、AI for Science、人才引进等。")
+        if focus:
+            prompt_lines.append(f"- 当前特别关注的比较焦点：{focus}")
+        if "、" in user_query and "比较" in user_query:
+            prompt_lines.append("- 如果比较对象超过两个，请先按对象逐个概括优势，再给出简短排序或分场景建议，不要把对象错误缩减为两篇无关政策。")
+    elif intent == "compare" and is_scenario_compare_query(user_query):
+        prompt_lines.extend(
+            [
+                "",
+                "额外回答要求：",
+                "- 当前未显式提供 response_mode，但问题呈现为场景化比较建议。",
+                "- 请尽量按“什么场景更适合A，什么场景更适合B”的方式回答。",
             ]
         )
 
