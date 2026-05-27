@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import dataclass
 
 from app.agent.graph import PolicyAgentGraph, build_initial_state
 from app.agent.nodes import planner_node
@@ -137,6 +138,16 @@ class StubPlanner:
         )
 
 
+@dataclass
+class FailingPlanner:
+    @property
+    def is_available(self) -> bool:
+        return True
+
+    def decide(self, user_query: str):
+        raise AssertionError("planner should not be called on main path")
+
+
 class StubRetrieveTool:
     def __init__(self, output: RetrievePolicyOutput) -> None:
         self.output = output
@@ -205,6 +216,34 @@ class StubNextStepPlanner:
 
 
 class GraphFlowTests(unittest.TestCase):
+    def test_graph_main_path_no_longer_depends_on_planner(self) -> None:
+        retrieval_output = build_retrieval_output(
+            [build_retrieval_result(rank=1, score=0.93, chunk_id="SH001_0001", doc_id="SH001", title="模塑申城")],
+            query="上海有哪些AI政策",
+        )
+        graph = PolicyAgentGraph(
+            rewriter=None,
+            answerer=None,
+            judge=StubJudge(),
+            next_step_planner=StubNextStepPlanner(),
+            retrieve_tool=StubRetrieveTool(retrieval_output),
+        )
+
+        state = graph.run(
+            build_initial_state(
+                "上海有哪些AI政策",
+                resolved_action="retrieve",
+                needs_rag=True,
+                needs_rewrite=False,
+                answer_style="direct",
+                response_mode="direct_answer",
+                retrieval_goal="multi_policy_topic",
+            ).query
+        )
+
+        self.assertEqual(state.resolved_action, "retrieve")
+        self.assertIsInstance(state.final_response, AgentResponse)
+
     def test_planner_prefers_resolver_structured_result(self) -> None:
         state = build_initial_state(
             "这两个地方哪个更好",
@@ -233,7 +272,6 @@ class GraphFlowTests(unittest.TestCase):
             query="上海有哪些AI政策",
         )
         graph = PolicyAgentGraph(
-            planner=StubPlanner(intent="retrieve"),
             retrieve_tool=StubRetrieveTool(retrieval_output),
             judge=StubJudge(),
             next_step_planner=StubNextStepPlanner(),
@@ -257,7 +295,6 @@ class GraphFlowTests(unittest.TestCase):
         summary_output = build_summary_output(query="总结扩大应用若干措施", doc_id="SH002", title="扩大应用若干措施")
         summarize_tool = StubSummarizeTool(summary_output)
         graph = PolicyAgentGraph(
-            planner=StubPlanner(intent="summarize", answer_style="structured"),
             retrieve_tool=StubRetrieveTool(retrieval_output),
             summarize_tool=summarize_tool,
             judge=StubJudge(),
@@ -282,7 +319,6 @@ class GraphFlowTests(unittest.TestCase):
         multi_output = build_multi_summary_output("总结一下上海的AI政策")
         summarize_policies_tool = StubSummarizePoliciesTool(multi_output)
         graph = PolicyAgentGraph(
-            planner=StubPlanner(intent="summarize", answer_style="structured"),
             retrieve_tool=StubRetrieveTool(retrieval_output),
             summarize_policies_tool=summarize_policies_tool,
             judge=StubJudge(),
@@ -307,7 +343,6 @@ class GraphFlowTests(unittest.TestCase):
         compare_output = build_compare_output("比较北京和上海的大模型政策")
         compare_tool = StubCompareTool(compare_output)
         graph = PolicyAgentGraph(
-            planner=StubPlanner(intent="compare", answer_style="comparative"),
             retrieve_tool=StubRetrieveTool(retrieval_output),
             compare_tool=compare_tool,
             judge=StubJudge(),

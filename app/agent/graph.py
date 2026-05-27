@@ -70,13 +70,14 @@ class PolicyAgentGraph:
         """执行完整 Agent 工作流，并返回最终状态。"""
 
         state = build_initial_state(query, top_k=top_k, max_retries=max_retries)
-        planned_state = planner_node(
-            state,
-            planner=self.planner,
-            supported_routes=self.supported_routes,
-        )
+        if state.resolved_action is None:
+            state = planner_node(
+                state,
+                planner=self.planner,
+                supported_routes=self.supported_routes,
+            )
         rewritten_state = rewrite_node(
-            planned_state,
+            state,
             rewriter=self.rewriter,
         )
         first_pass_state = self.run_execution_cycle(rewritten_state)
@@ -196,6 +197,9 @@ def build_initial_state(
     top_k: int = DEFAULT_QUERY_TOP_K,
     max_retries: int = 1,
     resolved_action: str | None = None,
+    needs_rag: bool | None = None,
+    needs_rewrite: bool | None = None,
+    answer_style: str | None = None,
     response_mode: str | None = None,
     retrieval_goal: str | None = None,
     focus: str | None = None,
@@ -208,6 +212,9 @@ def build_initial_state(
         query=normalized_query,
         max_retries=max_retries,
         resolved_action=resolved_action,
+        needs_rag=needs_rag,
+        needs_rewrite=needs_rewrite,
+        answer_style=answer_style,
         response_mode=response_mode,
         retrieval_goal=retrieval_goal,
         focus=focus,
@@ -221,11 +228,13 @@ def run_agent_workflow(
     top_k: int = DEFAULT_QUERY_TOP_K,
     max_retries: int = 1,
     resolved_action: str | None = None,
+    needs_rag: bool | None = None,
+    needs_rewrite: bool | None = None,
+    answer_style: str | None = None,
     response_mode: str | None = None,
     retrieval_goal: str | None = None,
     focus: str | None = None,
     answer_plan: dict[str, object] | None = None,
-    planner: PolicyAgentPlanner | None = None,
     rewriter: PolicyAgentRewriter | None = None,
     answerer: PolicyAgentAnswerer | None = None,
     judge: PolicyAgentJudge | None = None,
@@ -258,18 +267,23 @@ def run_agent_workflow(
         top_k=top_k,
         max_retries=max_retries,
         resolved_action=resolved_action,
+        needs_rag=needs_rag,
+        needs_rewrite=needs_rewrite,
+        answer_style=answer_style,
         response_mode=response_mode,
         retrieval_goal=retrieval_goal,
         focus=focus,
         answer_plan=answer_plan,
     )
-    planned_state = planner_node(
-        initial_state,
-        planner=planner,
-        supported_routes=cast(frozenset[str], supported_routes),
-    )
+    state_for_execution = initial_state
+    if state_for_execution.resolved_action is None:
+        state_for_execution = planner_node(
+            state_for_execution,
+            planner=planner,
+            supported_routes=cast(frozenset[str], supported_routes),
+        )
     rewritten_state = rewrite_node(
-        planned_state,
+        state_for_execution,
         rewriter=rewriter,
     )
     first_pass_state = graph.run_execution_cycle(rewritten_state)
@@ -304,7 +318,6 @@ def run_agent_query(
     *,
     top_k: int = DEFAULT_QUERY_TOP_K,
     max_retries: int = 1,
-    planner: PolicyAgentPlanner | None = None,
     rewriter: PolicyAgentRewriter | None = None,
     answerer: PolicyAgentAnswerer | None = None,
     judge: PolicyAgentJudge | None = None,

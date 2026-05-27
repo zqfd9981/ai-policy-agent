@@ -26,6 +26,9 @@ MEMORY_COMPLETION_SYSTEM_PROMPT = """
 
 字段说明：
 - resolved_action: retrieve / summarize / compare / chat
+- needs_rag: 是否需要政策知识库
+- needs_rewrite: 是否需要 query 改写
+- answer_style: direct / structured / comparative / advisory
 - response_mode:
   - direct_answer
   - structured_summary
@@ -67,6 +70,9 @@ class ContextCompletionModel(BaseModel):
         default=None,
         description="可选：retrieve / summarize / compare",
     )
+    needs_rag: bool | None = None
+    needs_rewrite: bool | None = None
+    answer_style: str | None = None
     response_mode: str | None = Field(
         default=None,
         description="可选：direct_answer / structured_summary / policy_overview_compare / scenario_advice_compare",
@@ -99,6 +105,9 @@ class ContextCompletionDecision:
     reason: str
     source: str
     resolved_action: str | None = None
+    needs_rag: bool | None = None
+    needs_rewrite: bool | None = None
+    answer_style: str | None = None
     response_mode: str | None = None
     retrieval_goal: str | None = None
     focus: str | None = None
@@ -142,6 +151,9 @@ class MemoryContextCompleter:
             reason=parsed.reason.strip(),
             source="llm",
             resolved_action=(parsed.resolved_action.strip().lower() if parsed.resolved_action else None),
+            needs_rag=parsed.needs_rag,
+            needs_rewrite=parsed.needs_rewrite,
+            answer_style=(parsed.answer_style.strip().lower() if parsed.answer_style else None),
             response_mode=(parsed.response_mode.strip().lower() if parsed.response_mode else None),
             retrieval_goal=(parsed.retrieval_goal.strip().lower() if parsed.retrieval_goal else None),
             focus=(parsed.focus.strip().lower() if parsed.focus else None),
@@ -257,6 +269,9 @@ def complete_region_switch_query(
             reason="识别为地区切换式追问，延续上一轮多文档摘要主题。",
             source="rule",
             resolved_action="summarize",
+            needs_rag=True,
+            needs_rewrite=True,
+            answer_style="structured",
             response_mode="structured_summary",
             retrieval_goal="multi_policy_region",
             answer_plan={
@@ -273,6 +288,9 @@ def complete_region_switch_query(
             contextualized_query=f"{target_region}{working_memory.active_topic}",
             reason="识别为地区切换式追问，延续上一轮主题。",
             source="rule",
+            needs_rag=True,
+            needs_rewrite=True,
+            answer_style="direct",
             retrieval_goal="multi_policy_topic",
             answer_plan={
                 "must_cover": ["policy_overview"],
@@ -358,6 +376,9 @@ def complete_group_compare_query(
             reason="识别到已有比较对象组，并将新地区并入同一组做多对象比较。",
             source="rule",
             resolved_action="compare",
+            needs_rag=True,
+            needs_rewrite=True,
+            answer_style="comparative",
             response_mode="scenario_advice_compare",
             retrieval_goal="compare_regions_multi",
             focus="location_choice",
@@ -376,6 +397,9 @@ def complete_group_compare_query(
         reason="识别到“这两个地方/哪个更好”等比较指代，使用最近两个地区实体补全 compare query。",
         source="rule",
         resolved_action="compare",
+        needs_rag=True,
+        needs_rewrite=True,
+        answer_style="comparative",
         response_mode="scenario_advice_compare",
         retrieval_goal="compare_regions",
         focus="location_choice",
@@ -419,6 +443,9 @@ def complete_focus_dimension_query(
             reason="识别到维度延续追问，沿用上一轮 compare 对象。",
             source="rule",
             resolved_action="compare",
+            needs_rag=True,
+            needs_rewrite=True,
+            answer_style="comparative",
             response_mode="policy_overview_compare",
             retrieval_goal="compare_policies",
             focus=focus_dimension,
@@ -437,6 +464,9 @@ def complete_focus_dimension_query(
             reason="识别到维度延续追问，沿用当前单篇政策对象。",
             source="rule",
             resolved_action="summarize",
+            needs_rag=True,
+            needs_rewrite=True,
+            answer_style="structured",
             response_mode="structured_summary",
             retrieval_goal="single_policy",
             focus=focus_dimension,
@@ -457,6 +487,9 @@ def complete_focus_dimension_query(
             reason="识别到维度延续追问，沿用当前地区与主题摘要上下文。",
             source="rule",
             resolved_action="summarize",
+            needs_rag=True,
+            needs_rewrite=True,
+            answer_style="structured",
             response_mode="structured_summary",
             retrieval_goal="multi_policy_region",
             focus=focus_dimension,
@@ -499,6 +532,9 @@ def complete_candidate_reference_query(
         reason="识别到按序号引用候选政策，自动下钻到对应单篇政策。",
         source="rule",
         resolved_action="summarize",
+        needs_rag=True,
+        needs_rewrite=True,
+        answer_style="structured",
         response_mode="structured_summary",
         retrieval_goal="single_policy",
         answer_plan={
